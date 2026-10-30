@@ -254,15 +254,42 @@ fi
 # отказом тут неправильно — смотрим обычные места установки и берём найденный
 # Go для сборки, не трогая систему.
 find_go() {
+	local dir
+	# 1. Прямое указание человека сильнее всего остального.
+	if [ -n "${MAXGW_GO:-}" ]; then
+		dir="$MAXGW_GO"
+		[ -d "$dir" ] && dir="$dir/go"
+		if [ -x "$dir" ]; then
+			PATH="$(dirname "$dir"):$PATH"
+			export PATH
+			say "Go взят по MAXGW_GO: $dir"
+			return 0
+		fi
+		say "ошибка: MAXGW_GO указывает на $MAXGW_GO, а go там нет." >&2
+		return 1
+	fi
+	# 2. Обычный случай: Go в PATH.
 	if command -v go >/dev/null 2>&1; then
 		return 0
 	fi
-	local candidates dir
-	candidates="${MAXGW_GO:-}"
-	if [ -n "$candidates" ]; then
-		if [ -d "$candidates" ]; then candidates="$candidates/go"; fi
-		if [ -x "$candidates" ]; then PATH="$(dirname "$candidates"):$PATH"; export PATH; say "Go взят по MAXGW_GO: $candidates"; return 0; fi
+	# 3. Список мест, заданный человеком (MAXGW_GO_DIRS, через двоеточия). Он же
+	#    используется проверками, чтобы не зависеть от чужой установки Go.
+	if [ -n "${MAXGW_GO_DIRS:-}" ]; then
+		local old_ifs="$IFS"
+		IFS=':'
+		for dir in $MAXGW_GO_DIRS; do
+			if [ -x "$dir/go" ]; then
+				PATH="$dir:$PATH"
+				export PATH
+				IFS="$old_ifs"
+				say "Go не было в PATH, но найден: $dir/go — использую его для этой сборки"
+				return 0
+			fi
+		done
+		IFS="$old_ifs"
+		return 1
 	fi
+	# 4. Обычные места установки.
 	for dir in /usr/local/go/bin /usr/lib/go/bin /opt/go/bin /snap/bin "$HOME/go/bin" "$HOME/sdk/go/bin" /usr/local/bin /usr/bin; do
 		if [ -x "$dir/go" ]; then
 			PATH="$dir:$PATH"

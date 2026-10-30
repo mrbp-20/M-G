@@ -286,23 +286,39 @@ if (-not $Build) {
 # тут неправильно — смотрим обычные места установки и берём найденный Go для
 # этой сборки, не трогая систему.
 function Find-Go {
-    if (Get-Command go -ErrorAction SilentlyContinue) { return $true }
-    $candidates = New-Object System.Collections.Generic.List[string]
+    # 1. Прямое указание человека сильнее всего остального.
     if ($env:MAXGW_GO) {
         $given = $env:MAXGW_GO
-        if (Test-Path -PathType Container $given) { $candidates.Add((Join-Path $given "go.exe")) }
-        else { $candidates.Add($given) }
+        if (Test-Path -PathType Container $given) { $given = (Join-Path $given "go.exe") }
+        if (Test-Path $given) {
+            $env:Path = "$(Split-Path -Parent $given);$env:Path"
+            Say "Go взят по MAXGW_GO: $given"
+            return $true
+        }
+        Say "ошибка: MAXGW_GO указывает на $($env:MAXGW_GO), а go там нет."
+        return $false
     }
-    $candidates.Add("C:\Program Files\Go\bin\go.exe")
-    $candidates.Add("C:\Go\bin\go.exe")
-    if ($env:LOCALAPPDATA) { $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Go\bin\go.exe")) }
-    if ($env:USERPROFILE) {
-        $candidates.Add((Join-Path $env:USERPROFILE "go\bin\go.exe"))
-        $candidates.Add((Join-Path $env:USERPROFILE "sdk\go\bin\go.exe"))
+    # 2. Обычный случай: Go в PATH.
+    if (Get-Command go -ErrorAction SilentlyContinue) { return $true }
+    # 3. Список мест, заданный человеком (MAXGW_GO_DIRS, через «;»). Он же
+    #    используется проверками, чтобы не зависеть от чужой установки Go.
+    $dirs = New-Object System.Collections.Generic.List[string]
+    if ($env:MAXGW_GO_DIRS) {
+        foreach ($dir in ($env:MAXGW_GO_DIRS -split ';')) { if ($dir) { $dirs.Add($dir) } }
     }
-    foreach ($candidate in $candidates) {
-        if ($candidate -and (Test-Path $candidate)) {
-            $env:Path = "$(Split-Path -Parent $candidate);$env:Path"
+    else {
+        $dirs.Add("C:\Program Files\Go\bin")
+        $dirs.Add("C:\Go\bin")
+        if ($env:LOCALAPPDATA) { $dirs.Add((Join-Path $env:LOCALAPPDATA "Programs\Go\bin")) }
+        if ($env:USERPROFILE) {
+            $dirs.Add((Join-Path $env:USERPROFILE "go\bin"))
+            $dirs.Add((Join-Path $env:USERPROFILE "sdk\go\bin"))
+        }
+    }
+    foreach ($dir in $dirs) {
+        $candidate = Join-Path $dir "go.exe"
+        if (Test-Path $candidate) {
+            $env:Path = "$dir;$env:Path"
             Say "Go не было в PATH, но найден: $candidate — использую его для этой сборки"
             return $true
         }

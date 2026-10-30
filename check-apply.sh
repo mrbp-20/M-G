@@ -99,19 +99,35 @@ code=$?
 grep -q 'Go взят по MAXGW_GO' "$W/out9" && [ "$code" = 0 ] && ok "код 0, Go взят по MAXGW_GO" || bad "код $code: $(tail -2 "$W/out9" | tr '\n' ' ')"
 
 echo "== 10. Go не в PATH, но лежит в обычном месте =="
+# Случай имеет смысл только там, где Go нет в PATH: на машине сборки он может
+# стоять, и тогда проверяется не наш поиск, а чужой PATH. Пропуск честнее подлога.
+# Список мест поиска задаётся явно: иначе на машине, где Go стоит в /usr/local/go,
+# проверялся бы он, а не наш поиск.
 mkdir -p "$W/home/go/bin" && cp "$G/go" "$W/home/go/bin/go"
-env -i HOME="$W/home" PATH=/usr/bin:/bin bash "$P/apply.sh" --coddy "$C" --build >"$W/out10" 2>&1
+env -i HOME="$W/home" PATH=/usr/bin:/bin MAXGW_GO_DIRS="$W/home/go/bin" \
+	bash "$P/apply.sh" --coddy "$C" --build >"$W/out10" 2>&1
 code=$?
 grep -q 'Go не было в PATH, но найден' "$W/out10" && [ "$code" = 0 ] && ok "код 0, Go найден в обычном месте" || bad "код $code: $(tail -2 "$W/out10" | tr '\n' ' ')"
 
 echo "== 11. Go нет нигде: понятный отказ =="
-env -i HOME="$W/nohome" PATH=/usr/bin:/bin bash "$P/apply.sh" --coddy "$C" --build >"$W/out11" 2>&1
+env -i HOME="$W/nohome" PATH=/usr/bin:/bin MAXGW_GO_DIRS="$W/nowhere" \
+	bash "$P/apply.sh" --coddy "$C" --build >"$W/out11" 2>&1
 code=$?
 grep -q 'Go не найден ни в PATH, ни в обычных местах' "$W/out11" \
 	&& grep -q 'curl -LO https://go.dev/dl' "$W/out11" \
 	&& grep -q 'Проверить:  command -v go && go version' "$W/out11" \
 	&& grep -q 'Накат слоя уже сделан' "$W/out11" \
 	&& [ "$code" = 1 ] && ok "код 1, установка, проверка и подсказка на месте" || bad "код $code: $(tail -3 "$W/out11" | tr '\n' ' ')"
+
+echo "== 12. Go просто в PATH: ничего искать не нужно =="
+# Этот случай легко потерять, увлёкшись поиском по местам: обычная установка
+# должна работать без всяких подсказок и без лишних строк в выводе.
+mkdir -p "$W/binpath" && cp "$G/go" "$W/binpath/go"
+env -i HOME="$W/home" PATH="$W/binpath:/usr/bin:/bin" \
+	bash "$P/apply.sh" --coddy "$C" --build >"$W/out12" 2>&1
+code=$?
+grep -q 'Go не было в PATH' "$W/out12" && bad "лишняя строка про поиск, хотя Go в PATH" || true
+[ "$code" = 0 ] && ok "код 0, сборка прошла обычным путём" || bad "код $code: $(tail -2 "$W/out12" | tr '\n' ' ')"
 
 echo
 [ "$fail" -eq 0 ] && echo "докатка проверена на макете" || echo "докатка НЕ проверена"
