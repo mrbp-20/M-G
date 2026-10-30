@@ -33,6 +33,63 @@
   API MAX не проходит (подробно — в `docs/surfaces/max.md` после наложения).
 - Около 2 ГБ свободного места на диске и доступ к Интернет.
 
+### Проверка версий и что делать, если ниже нужной
+
+Проверьте до установки — на этом ловятся почти все неудачи:
+
+```sh
+go version      # нужен go1.27.3 или новее
+node -v         # 22 или новее; нужен только для интерфейса
+npm -v
+```
+
+Старый Go останавливает сборку на первом шаге. `go.mod` просит набор инструментов `go1.27.3` и,
+начиная с Go 1.26, подтянет его сам — но только при доступе в Интернет. Надёжнее поставить нужную
+версию сразу: в репозитории дистрибутива она почти всегда старше, поэтому берём официальный архив с
+<https://go.dev/dl/>.
+
+**Windows.** Проще всего штатным установщиком пакетов:
+
+```powershell
+winget install --id GoLang.Go -e --accept-source-agreements --accept-package-agreements
+```
+
+Если нужна ровно 1.27.3 — MSI с той же страницы, от администратора:
+`msiexec /i go1.27.3.windows-amd64.msi /quiet`. Без прав администратора — архив
+`go1.27.3.windows-amd64.zip`: распаковать в `%LOCALAPPDATA%\Programs\Go` и один раз дописать в PATH:
+
+```powershell
+[Environment]::SetEnvironmentVariable('PATH',
+  [Environment]::GetEnvironmentVariable('PATH','User') + ';' + "$env:LOCALAPPDATA\Programs\Go\bin", 'User')
+```
+
+**Linux и WSL2** — одинаково, официальный архив (для ARM-машин `linux-arm64`):
+
+```sh
+curl -LO https://go.dev/dl/go1.27.3.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.27.3.linux-amd64.tar.gz
+echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile
+export PATH=/usr/local/go/bin:$PATH
+```
+
+**macOS** — если работаете на нём: `brew install go` или пакет `.pkg` с той же страницы.
+
+После установки откройте **новое** окно консоли: старое новый PATH не увидит. Проверка — `go version`,
+ответ должен быть `go1.27.3` или новее.
+
+**Node.js ниже 22.** Нужен только для сборки интерфейса. Поставить: `winget install OpenJS.NodeJS.LTS`
+на Windows, на Linux и WSL2 — архив с <https://nodejs.org/en/download> или `nvm`. Если ставить не
+хочется, соберите без интерфейса, убрав тег `ui`:
+
+```sh
+bash apply.sh --clone ~/coddy-src --build --tags "http,scheduler,memory,cli,gateway.max,swarm"
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Clone C:\coddy-src -Build `
+  -Tags "http,scheduler,memory,cli,gateway.max,swarm"
+```
+
 ## Как накатить: четыре шага
 
 Нужны две вещи: наш слой и Coddy той версии, под которую он сделан.

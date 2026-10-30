@@ -33,6 +33,63 @@ dossier), the checks in `.github/workflows/`, and the acceptance test `features/
   to the MAX API fails (details in `docs/surfaces/max.md` after the overlay).
 - About 2 GB of free disk space and internet access.
 
+### Checking the versions, and what to do when yours is older
+
+Check before you install - this is where almost every failure shows up first:
+
+```sh
+go version      # go1.27.3 or newer
+node -v         # 22 or newer; needed only for the web interface
+npm -v
+```
+
+An older Go stops the build at the first step. `go.mod` asks for the `go1.27.3` toolchain and, from Go
+1.26 on, fetches it by itself - but only with internet access. Installing the right version up front is
+more reliable: a distribution package is almost always older, so take the official archive from
+<https://go.dev/dl/>.
+
+**Windows.** The shortest way is the system package installer:
+
+```powershell
+winget install --id GoLang.Go -e --accept-source-agreements --accept-package-agreements
+```
+
+If you need exactly 1.27.3, take the MSI from the same page, as administrator:
+`msiexec /i go1.27.3.windows-amd64.msi /quiet`. Without administrator rights, unpack the archive
+`go1.27.3.windows-amd64.zip` into `%LOCALAPPDATA%\Programs\Go` and add it to PATH once:
+
+```powershell
+[Environment]::SetEnvironmentVariable('PATH',
+  [Environment]::GetEnvironmentVariable('PATH','User') + ';' + "$env:LOCALAPPDATA\Programs\Go\bin", 'User')
+```
+
+**Linux and WSL2** - the same official archive (ARM machines take `linux-arm64`):
+
+```sh
+curl -LO https://go.dev/dl/go1.27.3.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.27.3.linux-amd64.tar.gz
+echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile
+export PATH=/usr/local/go/bin:$PATH
+```
+
+**macOS** - if you work on it: `brew install go`, or the `.pkg` from the same page.
+
+After installing, open a **new** terminal window: the old one does not see the new PATH. Then check with
+`go version`, which has to answer `go1.27.3` or newer.
+
+**Node.js older than 22.** It is needed only to build the web interface. Install it with
+`winget install OpenJS.NodeJS.LTS` on Windows, or from <https://nodejs.org/en/download> (or `nvm`) on
+Linux and WSL2. If you would rather not, build without the interface by dropping the `ui` tag:
+
+```sh
+bash apply.sh --clone ~/coddy-src --build --tags "http,scheduler,memory,cli,gateway.max,swarm"
+```
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Clone C:\coddy-src -Build `
+  -Tags "http,scheduler,memory,cli,gateway.max,swarm"
+```
+
 ## How to install: four steps
 
 You need two things: our layer and the Coddy version the layer was made for.
