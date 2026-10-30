@@ -294,6 +294,19 @@ else
 	bad "нет check-updater.sh"
 fi
 
+echo "== докатка в накатчике на макете =="
+if [ -f check-apply.sh ]; then
+	tmpa="$(mktemp)"
+	if bash check-apply.sh >"$tmpa" 2>&1; then
+		ok "все состояния повторного запуска пройдены"
+	else
+		bad "макет накатчика: $(tail -3 "$tmpa" | tr '\n' ' ')"
+	fi
+	rm -f "$tmpa"
+else
+	bad "нет check-apply.sh"
+fi
+
 echo
 if [ "$fail" -eq 0 ]; then
 	echo "все проверки пакета пройдены"

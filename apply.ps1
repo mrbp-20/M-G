@@ -73,13 +73,50 @@ if (-not (Test-Path $manifestPath)) { Fail "нет $manifestPath" }
 if (-not (Test-Path $overlayPath)) { Fail "нет каталога $overlayPath" }
 
 # --- клон нужной версии Coddy ----------------------------------------------
+# Каталог из -Clone мог остаться от прошлого запуска: первый раз сборка оборвалась
+# (например, не было Go), файлы уже наложены. Отказывать в этом случае
+# бессмысленно — надо проверить, тот ли это Coddy, и продолжить с него.
+function Get-CloneState([string]$dir) {
+    if (-not (Test-Path $dir)) { return "missing" }
+    if (-not (Test-Path (Join-Path $dir "go.mod"))) { return "not-coddy" }
+    if (-not (Test-Path (Join-Path $dir ".git"))) { return "no-git" }
+    $head = (& git -C $dir rev-parse HEAD 2>$null)
+    if ($LASTEXITCODE -ne 0 -or -not $head) { return "no-head" }
+    if ("$head".Trim() -eq $baseCommit) { return "ready" }
+    return "other-version"
+}
+
 if ($Clone -ne "") {
-    if (Test-Path $Clone) {
-        Fail "$Clone уже существует: укажите пустой путь или используйте -Coddy"
+    switch (Get-CloneState $Clone) {
+        "missing" {
+            Say "клонирую Coddy $baseTag в $Clone"
+            & git clone --depth 1 --branch $baseTag $upstreamUrl $Clone
+            if ($LASTEXITCODE -ne 0) { Fail "клон не удался (нет сети или нет такой метки)" }
+        }
+        "ready" {
+            Say "клон уже на месте: $Clone (Coddy $baseTag) — продолжаю с ним"
+        }
+        "no-git" {
+            Say "в $Clone нет .git: версию по git не проверить, сверю файлы по хешам манифеста"
+        }
+        "other-version" {
+            $got = (& git -C $Clone describe --tags --always 2>$null)
+            if (-not $got) { $got = "неизвестно" }
+            Say ""
+            Say "ошибка: в $Clone уже лежит Coddy $got, а нужен $baseTag ($($baseCommit.Substring(0,8)))."
+            Say ""
+            Say "Это дерево другой версии, и накатывать на него слой нельзя. Возьмите нужную:"
+            Say "  git -C `"$Clone`" fetch --tags; git -C `"$Clone`" checkout $baseTag"
+            Say "или укажите другой путь: -Clone <путь>, либо готовый клон: -Coddy <путь>"
+            exit 2
+        }
+        "no-head" {
+            Fail "не смог прочитать версию в $Clone (git rev-parse не ответил). Проверьте: git -C `"$Clone`" describe --tags --always"
+        }
+        default {
+            Fail "$Clone существует, но это не исходники Coddy (нет go.mod). Укажите пустой путь для клона или готовое дерево через -Coddy"
+        }
     }
-    Say "клонирую Coddy $baseTag в $Clone"
-    & git clone --depth 1 --branch $baseTag $upstreamUrl $Clone
-    if ($LASTEXITCODE -ne 0) { Fail "клон не удался (нет сети или нет такой метки)" }
     $Coddy = $Clone
 }
 
@@ -120,6 +157,9 @@ Say "клон: $Coddy"
 $mismatch = 0
 $missing = 0
 $broken = 0
+$already = 0
+$unknown = 0
+$unknownList = New-Object System.Collections.Generic.List[string]
 $brokenList = New-Object System.Collections.Generic.List[string]
 $drift = New-Object System.Collections.Generic.List[string]
 foreach ($row in $rows) {
@@ -138,6 +178,13 @@ foreach ($row in $rows) {
         if ($broken -le 8) { $brokenList.Add("$($row.Path) (хеш слоя не совпал с манифестом)") }
         continue
     }
+    # Файл уже наш — значит прошлый запуск дошёл до него и оборвался позже.
+    # Это штатное состояние повторного запуска, а не расхождение версий.
+    $targetPath = Join-Path $Coddy $row.Path
+    if ((Test-Path $targetPath) -and ((Get-Sha $targetPath) -eq $row.OurSha)) {
+        $already++
+        continue
+    }
     if ($row.Kind -ne "modified") { continue }
     $target = Join-Path $Coddy $row.Path
     if (-not (Test-Path $target)) {
@@ -145,10 +192,19 @@ foreach ($row in $rows) {
         $drift.Add("$($row.Path) (нет в клоне)")
         continue
     }
+    # Содержимое не наше и не исходное. Что это значит, решает не файл, а дерево:
+    # если в нём уже есть наши файлы, прошлый запуск состоялся, и такой файл просто
+    # испорчен после него — восстановим. Если наших файлов нет вовсе, это чужое
+    # дерево другой версии, и накатывать нельзя.
     if ((Get-Sha $target) -ne $row.BaseSha) {
-        $mismatch++
-        if ($mismatch -le 8) { $drift.Add($row.Path) }
+        $unknown++
+        if ($unknown -le 8) { $unknownList.Add($row.Path) }
     }
+}
+
+if ($unknown -gt 0 -and $already -eq 0) {
+    $mismatch = $unknown
+    foreach ($item in $unknownList) { $drift.Add($item) }
 }
 
 if ($broken -gt 0) {
@@ -174,10 +230,22 @@ if ($missing -gt 0 -or $mismatch -gt 0) {
     exit 2
 }
 
-Say "сверка: все $($rows.Count) файлов слоя совместимы с этим клоном"
+if ($already -eq $rows.Count) {
+    Say "сверка: все $($rows.Count) файлов слоя уже на месте — прошлый запуск дошёл до конца"
+} elseif ($unknown -gt 0 -and $already -gt 0) {
+    Say "сверка: $($rows.Count) файлов слоя совместимы, $already уже наложено, $unknown испорчено — восстановлю"
+} elseif ($already -gt 0) {
+    Say "сверка: $($rows.Count) файлов слоя совместимы с этим клоном, из них уже наложено $already"
+} else {
+    Say "сверка: все $($rows.Count) файлов слоя совместимы с этим клоном"
+}
 
 if ($Check) {
-    Say "проверка пройдена (-Check: ничего не изменено)"
+    if ($already -eq $rows.Count) {
+        Say "проверка пройдена: слой уже наложен полностью (-Check: ничего не изменено)"
+    } else {
+        Say "проверка пройдена: осталось наложить $($rows.Count - $already) из $($rows.Count)"
+    }
     exit 0
 }
 
@@ -188,6 +256,7 @@ foreach ($row in $rows) {
     $source = Join-Path $overlayPath $row.Path
     if (-not (Test-Path $source)) { Fail "в слое нет файла $($row.Path)" }
     $target = Join-Path $Coddy $row.Path
+    if ((Test-Path $target) -and ((Get-Sha $target) -eq $row.OurSha)) { continue }
     $dir = Split-Path -Parent $target
     if (-not (Test-Path $dir)) { New-Item -ItemType Directory -Path $dir -Force | Out-Null }
     Copy-Item -LiteralPath $source -Destination $target -Force
@@ -196,6 +265,12 @@ foreach ($row in $rows) {
 }
 
 Say "наложено файлов: $copied"
+if ($already -gt 0) {
+    Say "уже были на месте (прошлый запуск): $already"
+}
+if ($unknown -gt 0 -and $already -gt 0) {
+    Say "восстановлено после обрыва: $unknown"
+}
 
 if (-not $Build) {
     Say ""
@@ -207,7 +282,7 @@ if (-not $Build) {
 
 # --- сборка ----------------------------------------------------------------
 if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-    Fail "go не найден в PATH (нужен Go 1.27.3 или новее)"
+    Fail ("go не найден в PATH (нужен Go 1.26 или новее; набор инструментов " + "go1.27.3 проект подтянет сам)")
 }
 
 $ver = "$baseTag-max-layer"

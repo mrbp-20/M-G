@@ -49,11 +49,60 @@ done
 [ -f "$MANIFEST" ] || fail "нет $MANIFEST"
 [ -d "$OVERLAY" ] || fail "нет каталога $OVERLAY"
 
+# Каталог из --clone мог остаться от прошлого запуска: первый раз сборка
+# оборвалась (например, не было Go), файлы уже наложены. Отказывать в этом
+# случае бессмысленно — надо проверить, тот ли это Coddy, и продолжить с него.
+clone_state() {
+	local dir="$1"
+	[ -e "$dir" ] || { echo missing; return; }
+	[ -f "$dir/go.mod" ] || { echo not-coddy; return; }
+	[ -d "$dir/.git" ] || { echo no-git; return; }
+	local head
+	head="$(git -C "$dir" rev-parse HEAD 2>/dev/null || true)"
+	if [ -z "$head" ]; then
+		echo no-head
+		return
+	fi
+	if [ "$head" = "$BASE_COMMIT" ]; then
+		echo ready
+	else
+		echo other-version
+	fi
+}
+
 if [ -n "$CLONE" ]; then
-	[ -e "$CLONE" ] && fail "$CLONE уже существует: укажите пустой путь или используйте --coddy"
-	say "клонирую Coddy ${BASE_TAG} в $CLONE"
-	GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$BASE_TAG" "$UPSTREAM_URL" "$CLONE" \
-		|| fail "клон не удался (нет сети или нет такой метки)"
+	case "$(clone_state "$CLONE")" in
+	missing)
+		say "клонирую Coddy ${BASE_TAG} в $CLONE"
+		GIT_TERMINAL_PROMPT=0 git clone --depth 1 --branch "$BASE_TAG" "$UPSTREAM_URL" "$CLONE" \
+			|| fail "клон не удался (нет сети или нет такой метки)"
+		;;
+	ready)
+		say "клон уже на месте: $CLONE (Coddy ${BASE_TAG}) — продолжаю с ним"
+		;;
+	no-git)
+		say "в $CLONE нет .git: версию по git не проверить, сверю файлы по хешам манифеста"
+		;;
+	other-version)
+		got="$(git -C "$CLONE" describe --tags --always 2>/dev/null || echo неизвестно)"
+		say "ошибка: в $CLONE уже лежит Coddy $got, а нужен ${BASE_TAG} (${BASE_COMMIT:0:8})." >&2
+		say "" >&2
+		say "Это дерево другой версии, и накатывать на него слой нельзя. Возьмите нужную:" >&2
+		say "  git -C \"$CLONE\" fetch --tags && git -C \"$CLONE\" checkout ${BASE_TAG}" >&2
+		say "или укажите другой путь: --clone <путь>, либо готовый клон: --coddy <путь>" >&2
+		exit 2
+		;;
+	no-head)
+		say "ошибка: не смог прочитать версию в $CLONE (git rev-parse не ответил)." >&2
+		say "Проверьте клон сами: git -C \"$CLONE\" describe --tags --always" >&2
+		exit 2
+		;;
+	*)
+		say "ошибка: $CLONE существует, но это не исходники Coddy (нет go.mod)." >&2
+		say "Укажите пустой путь для клона или готовое дерево через --coddy" >&2
+		exit 2
+		;;
+	esac
 	CODDY="$CLONE"
 fi
 
@@ -72,6 +121,9 @@ say "клон: $CODDY"
 mismatch=0
 missing=0
 broken=0
+already=0
+unknown=0
+unknown_list=""
 drift_list=""
 broken_list=""
 total=0
@@ -94,19 +146,33 @@ while IFS=$'\t' read -r path kind base_sha our_sha; do
 		[ "$broken" -le 8 ] && broken_list="${broken_list}${path} (хеш слоя не совпал с манифестом)\n"
 		continue
 	fi
+	# Файл уже наш — значит прошлый запуск дошёл до него и оборвался позже.
+	# Это штатное состояние повторного запуска, а не расхождение версий.
+	if [ -f "$target" ] && [ "$(sha "$target")" = "$our_sha" ]; then
+		already=$((already + 1))
+		continue
+	fi
 	if [ "$kind" = "modified" ]; then
 		if [ ! -f "$target" ]; then
 			missing=$((missing + 1))
 			drift_list="${drift_list}${path} (нет в клоне)\n"
 			continue
 		fi
-		got="$(sha "$target")"
-		if [ "$got" != "$base_sha" ]; then
-			mismatch=$((mismatch + 1))
-			[ "$mismatch" -le 8 ] && drift_list="${drift_list}${path}\n"
+		# Содержимое не наше и не исходное. Что это значит — решает не файл, а
+		# дерево: если в нём уже есть наши файлы, прошлый запуск состоялся, и такой
+		# файл просто испорчен после него; восстановим. Если наших файлов нет
+		# вовсе — это чужое дерево другой версии, и накатывать нельзя.
+		if [ "$(sha "$target")" != "$base_sha" ]; then
+			unknown=$((unknown + 1))
+			[ "$unknown" -le 8 ] && unknown_list="${unknown_list}${path}\n"
 		fi
 	fi
 done < "$MANIFEST"
+
+if [ "$unknown" -gt 0 ] && [ "$already" -eq 0 ]; then
+	mismatch=$unknown
+	drift_list="$unknown_list"
+fi
 
 if [ "$broken" -gt 0 ]; then
 	say ""
@@ -131,10 +197,22 @@ if [ "$missing" -gt 0 ] || [ "$mismatch" -gt 0 ]; then
 	exit 2
 fi
 
-say "сверка: все ${total} файлов слоя совместимы с этим клоном"
+if [ "$already" -eq "$total" ]; then
+	say "сверка: все ${total} файлов слоя уже на месте — прошлый запуск дошёл до конца"
+elif [ "$unknown" -gt 0 ] && [ "$already" -gt 0 ]; then
+	say "сверка: ${total} файлов слоя совместимы, ${already} уже наложено, ${unknown} испорчено — восстановлю"
+elif [ "$already" -gt 0 ]; then
+	say "сверка: ${total} файлов слоя совместимы с этим клоном, из них уже наложено ${already}"
+else
+	say "сверка: все ${total} файлов слоя совместимы с этим клоном"
+fi
 
 if [ "$CHECK_ONLY" -eq 1 ]; then
-	say "проверка пройдена (--check: ничего не изменено)"
+	if [ "$already" -eq "$total" ]; then
+		say "проверка пройдена: слой уже наложен полностью (--check: ничего не изменено)"
+	else
+		say "проверка пройдена: осталось наложить $((total - already)) из ${total}"
+	fi
 	exit 0
 fi
 
@@ -144,6 +222,9 @@ while IFS=$'\t' read -r path kind base_sha our_sha; do
 	src="$OVERLAY/$path"
 	target="$CODDY/$path"
 	[ -f "$src" ] || fail "в слое нет файла $path"
+	if [ -f "$target" ] && [ "$(sha "$target")" = "$our_sha" ]; then
+		continue
+	fi
 	mkdir -p "$(dirname "$target")"
 	cp -p "$src" "$target" || fail "не удалось записать $target"
 	got="$(sha "$target")"
@@ -152,17 +233,23 @@ while IFS=$'\t' read -r path kind base_sha our_sha; do
 done < "$MANIFEST"
 
 say "наложено файлов: $copied"
+if [ "$already" -gt 0 ]; then
+	say "уже были на месте (прошлый запуск): $already"
+fi
+if [ "$unknown" -gt 0 ] && [ "$already" -gt 0 ]; then
+	say "восстановлено после обрыва: $unknown"
+fi
 
 if [ "$DO_BUILD" -eq 0 ]; then
 	say ""
 	say "дальше:"
-	say "  bash apply.sh --coddy \"$CODDY\" --build   # накат и сборка одной командой"
+	say "  bash \"$HERE/apply.sh\" --coddy \"$CODDY\" --build   # накат и сборка одной командой"
 	say "  # или собрать вручную, уже после наката:"
 	say "  cd \"$CODDY\" && go build -tags \"$TAGS\" -o build/coddy ./cmd/coddy/"
 	exit 0
 fi
 
-command -v go >/dev/null 2>&1 || fail "go не найден в PATH (нужен Go 1.27.3 или новее)"
+command -v go >/dev/null 2>&1 || fail "go не найден в PATH (нужен Go 1.26 или новее; точный набор инструментов go1.27.3 проект подтянет сам)"
 VER="${BASE_TAG}-max-layer"
 REV="${LAYER_SOURCE_COMMIT:-${LAYER_COMMIT:-unknown}}"
 LDFLAGS="-X github.com/EvilFreelancer/coddy-agent/internal/version.Version=${VER}"

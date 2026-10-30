@@ -24,8 +24,8 @@ dossier), the checks in `.github/workflows/`, and the acceptance test `features/
 
 - **Coddy 1.3.62** — tag `1.3.62`, commit `902ee08f`. The layer is pinned to it: it replaces files of the
   original, and on another version they diverge.
-- **Go 1.27.3 or newer** — `go.mod` declares `go 1.26.0` and `toolchain go1.27.3`.
-  Download: <https://go.dev/dl/>.
+- **Go 1.26 or newer** — `go.mod` declares `go 1.26.0` and `toolchain go1.27.3`: if your Go is older
+  than 1.27.3, the toolchain is fetched for you (internet access needed). Download: <https://go.dev/dl/>.
 - **Node.js 26** (the build is verified on 22.22.1 too) — only if you build the web interface:
   <https://nodejs.org/en/download>.
 - **git** — to fetch Coddy from its repository.
@@ -38,15 +38,16 @@ dossier), the checks in `.github/workflows/`, and the acceptance test `features/
 Check before you install - this is where almost every failure shows up first:
 
 ```sh
-go version      # go1.27.3 or newer
+go version      # 1.26 or newer; 1.27.0 is fine - 1.27.3 comes with it
 node -v         # 22 or newer; needed only for the web interface
 npm -v
 ```
 
-An older Go stops the build at the first step. `go.mod` asks for the `go1.27.3` toolchain and, from Go
-1.26 on, fetches it by itself - but only with internet access. Installing the right version up front is
-more reliable: a distribution package is almost always older, so take the official archive from
-<https://go.dev/dl/>.
+Without Go at all the build never starts, so it has to be there before the first run. A version older
+than 1.27.3 is no obstacle: `go.mod` asks for the `go1.27.3` toolchain, and Go from 1.26 on fetches it
+by itself - with internet access only. That is why the Go 1.27.0 installed by `winget` works: it
+downloads 1.27.3 on the first build. If your distribution has nothing close, take the official archive
+from <https://go.dev/dl/>.
 
 **Windows.** The shortest way is the system package installer:
 
@@ -254,6 +255,19 @@ The lines are Russian because the installer speaks to the person in Russian; thi
 translation: "layer: 161 manifest rows (with the header), Coddy base 1.3.62", "clone: …", "check: all 160
 files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 160",
 "building", "done", and, on a mismatch, "THE LAYER DOES NOT FIT THIS CODDY VERSION".
+
+## Running it again after an interruption
+
+The first run may stop halfway: no Go, the network dropped, the window was closed. Repeating the same
+command is expected - the installer looks at what is already done and continues:
+
+- a directory passed to `--clone` / `-Clone` is no longer an obstacle: if it holds the right Coddy
+  version, the work continues in it ("клон уже на месте... продолжаю с ним"); a different version gets
+  a clear message and the command to fix it;
+- files already in place and matching the layer are not copied again, so you end up with
+  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 160";
+- a file damaged after the overlay is restored ("восстановлено после обрыва: N");
+- `--check` / `-Check` on a finished tree answers "слой уже наложен полностью".
 
 ## What apply.sh does
 
