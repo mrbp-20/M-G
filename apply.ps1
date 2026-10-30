@@ -281,8 +281,52 @@ if (-not $Build) {
 }
 
 # --- сборка ----------------------------------------------------------------
-if (-not (Get-Command go -ErrorAction SilentlyContinue)) {
-    Fail ("go не найден в PATH (нужен Go 1.26 или новее; набор инструментов " + "go1.27.3 проект подтянет сам)")
+# Go мог быть поставлен только что: установщик прописал PATH, но это окно
+# терминала держит среду, с которой стартовало, и команды не видит. Отказывать
+# тут неправильно — смотрим обычные места установки и берём найденный Go для
+# этой сборки, не трогая систему.
+function Find-Go {
+    if (Get-Command go -ErrorAction SilentlyContinue) { return $true }
+    $candidates = New-Object System.Collections.Generic.List[string]
+    if ($env:MAXGW_GO) {
+        $given = $env:MAXGW_GO
+        if (Test-Path -PathType Container $given) { $candidates.Add((Join-Path $given "go.exe")) }
+        else { $candidates.Add($given) }
+    }
+    $candidates.Add("C:\Program Files\Go\bin\go.exe")
+    $candidates.Add("C:\Go\bin\go.exe")
+    if ($env:LOCALAPPDATA) { $candidates.Add((Join-Path $env:LOCALAPPDATA "Programs\Go\bin\go.exe")) }
+    if ($env:USERPROFILE) {
+        $candidates.Add((Join-Path $env:USERPROFILE "go\bin\go.exe"))
+        $candidates.Add((Join-Path $env:USERPROFILE "sdk\go\bin\go.exe"))
+    }
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            $env:Path = "$(Split-Path -Parent $candidate);$env:Path"
+            Say "Go не было в PATH, но найден: $candidate — использую его для этой сборки"
+            return $true
+        }
+    }
+    return $false
+}
+
+if (-not (Find-Go)) {
+    Say ""
+    Say "ошибка: Go не найден ни в PATH, ни в обычных местах (нужен Go 1.26 или новее)."
+    Say ""
+    Say "Поставить (Windows):"
+    Say "  winget install --id GoLang.Go -e --accept-source-agreements --accept-package-agreements"
+    Say "  или MSI с https://go.dev/dl/ от администратора:"
+    Say "  msiexec /i go1.27.3.windows-amd64.msi /quiet"
+    Say ""
+    Say "Проверить:  where.exe go   и   go version"
+    Say "Обновить PATH в этом окне:"
+    Say "  `$env:Path = [Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [Environment]::GetEnvironmentVariable('Path','User')"
+    Say "Если Go лежит в необычном месте:  `$env:MAXGW_GO = 'C:\путь\к\каталогу\с\go.exe'"
+    Say ""
+    Say "Накат слоя уже сделан: файлы на месте, повторять его не нужно —"
+    Say "запустите ту же команду снова, когда go будет виден."
+    exit 1
 }
 
 $ver = "$baseTag-max-layer"

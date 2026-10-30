@@ -249,7 +249,49 @@ if [ "$DO_BUILD" -eq 0 ]; then
 	exit 0
 fi
 
-command -v go >/dev/null 2>&1 || fail "go не найден в PATH (нужен Go 1.26 или новее; точный набор инструментов go1.27.3 проект подтянет сам)"
+# Go мог быть поставлен только что: установщик прописал PATH, но это окно
+# терминала держит среду, с которой стартовало, и команды не видит. Искать
+# отказом тут неправильно — смотрим обычные места установки и берём найденный
+# Go для сборки, не трогая систему.
+find_go() {
+	if command -v go >/dev/null 2>&1; then
+		return 0
+	fi
+	local candidates dir
+	candidates="${MAXGW_GO:-}"
+	if [ -n "$candidates" ]; then
+		if [ -d "$candidates" ]; then candidates="$candidates/go"; fi
+		if [ -x "$candidates" ]; then PATH="$(dirname "$candidates"):$PATH"; export PATH; say "Go взят по MAXGW_GO: $candidates"; return 0; fi
+	fi
+	for dir in /usr/local/go/bin /usr/lib/go/bin /opt/go/bin /snap/bin "$HOME/go/bin" "$HOME/sdk/go/bin" /usr/local/bin /usr/bin; do
+		if [ -x "$dir/go" ]; then
+			PATH="$dir:$PATH"
+			export PATH
+			say "Go не было в PATH, но найден: $dir/go — использую его для этой сборки"
+			return 0
+		fi
+	done
+	return 1
+}
+
+if ! find_go; then
+	say "ошибка: Go не найден ни в PATH, ни в обычных местах (нужен Go 1.26 или новее)." >&2
+	say "" >&2
+	say "Поставить (Linux и WSL2):" >&2
+	say "  curl -LO https://go.dev/dl/go1.27.3.linux-amd64.tar.gz" >&2
+	say "  sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.27.3.linux-amd64.tar.gz" >&2
+	say "  echo 'export PATH=/usr/local/go/bin:\$PATH' >> ~/.profile" >&2
+	say "" >&2
+	say "Поставить (macOS): brew install go   или пакет .pkg с https://go.dev/dl/" >&2
+	say "" >&2
+	say "Проверить:  command -v go && go version" >&2
+	say "Обновить PATH в этом окне:  export PATH=/usr/local/go/bin:\$PATH" >&2
+	say "Если Go лежит в необычном месте:  MAXGW_GO=/путь/к/каталогу/с/go bash apply.sh ..." >&2
+	say "" >&2
+	say "Накат слоя уже сделан: файлы на месте, повторять его не нужно —" >&2
+	say "запустите ту же команду снова, когда go будет виден." >&2
+	exit 1
+fi
 VER="${BASE_TAG}-max-layer"
 REV="${LAYER_SOURCE_COMMIT:-${LAYER_COMMIT:-unknown}}"
 LDFLAGS="-X github.com/EvilFreelancer/coddy-agent/internal/version.Version=${VER}"

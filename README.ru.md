@@ -1,70 +1,71 @@
-# MAX gateway for Coddy — an overlay layer
+# Шлюз MAX для Coddy — слой для наложения
 
-This is not a copy of Coddy: a layer of 160 files adds a gateway for the MAX messenger to Coddy. Coddy
-itself comes from its own repository —
-[coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,
-after which a build with the `gateway.max` tag produces a binary with the gateway.
+Это не копия Coddy целиком: слой из 160 файлов добавляет в Coddy шлюз для мессенджера MAX.
+Сам Coddy берётся из своего репозитория —
+[coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent).
+Слой накладывается поверх, после чего сборка с тегом `gateway.max` даёт бинарник со шлюзом.
 
-## What is inside
+## Что внутри
 
-| Item | Why |
+| Что | Зачем |
 |---|---|
-| `overlay/` | 160 files at the same paths as in Coddy: 112 new and 48 replaced |
-| `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.3.62 file, sha256 of ours |
-| `apply.sh` | version check, layer application, build (Linux, WSL2) |
-| `apply.ps1`, `apply.cmd` | the same for Windows: PowerShell and a cmd wrapper |
-| `VERSION` | the Coddy version the layer fits, and the layer's own version |
+| `overlay/` | 160 файлов по тем же путям, что в Coddy: 112 новых и 48 заменяемых |
+| `MANIFEST.tsv` | на каждый файл: путь, тип, sha256 исходного файла Coddy 1.3.62 и sha256 нашего |
+| `apply.sh` | сверка версии, наложение слоя, сборка (Linux, WSL2) |
+| `apply.ps1`, `apply.cmd` | то же для Windows: PowerShell и обёртка для cmd |
+| `VERSION` | версия Coddy, на которую ложится слой, и версия самого слоя |
 | `LICENSE` | MIT |
 
-Beside the code the layer carries its documents: `docs/surfaces/max.md` with its Russian twin,
-`docs/MAX-OVERLAY.md` (the layer map: what lies where and why), `docs/max-dossier/` (the MAX platform
-dossier), the checks in `.github/workflows/`, and the acceptance test `features/gateway_max.feature`.
+Кроме кода в слое — его документы: `docs/surfaces/max.md` с русским двойником, `docs/MAX-OVERLAY.md`
+(карта слоя: что где лежит и почему), `docs/max-dossier/` (разбор платформы MAX), проверки в
+`.github/workflows/`, сценарий приёмочных тестов `features/gateway_max.feature`.
 
-## What you need
+## Что нужно
 
-- **Coddy 1.3.62** — tag `1.3.62`, commit `902ee08f`. The layer is pinned to it: it replaces files of the
-  original, and on another version they diverge.
-- **Go 1.26 or newer** — `go.mod` declares `go 1.26.0` and `toolchain go1.27.3`: if your Go is older
-  than 1.27.3, the toolchain is fetched for you (internet access needed). Download: <https://go.dev/dl/>.
-- **Node.js 26** (the build is verified on 22.22.1 too) — only if you build the web interface:
+- **Coddy версии 1.3.62** — метка `1.3.62`, коммит `902ee08f`. Слой привязан к ней: он заменяет
+  файлы оригинала, и на другой версии они разойдутся.
+- **Go 1.26 или новее** — в `go.mod` объявлены `go 1.26.0` и `toolchain go1.27.3`: если ваш Go
+  старше 1.27.3, набор инструментов подтянется сам (нужен доступ в Интернет). Скачать:
+  <https://go.dev/dl/>.
+- **Node.js 26** (сборка проверена и на 22.22.1) — только если собираете веб-интерфейс:
   <https://nodejs.org/en/download>.
-- **git** — to fetch Coddy from its repository.
-- **A MAX bot token** and your MAX id; the **MinCifry root certificate** — without it the TLS connection
-  to the MAX API fails (details in `docs/surfaces/max.md` after the overlay).
-- About 2 GB of free disk space and internet access.
+- **git** — чтобы взять Coddy из его репозитория.
+- **Токен бота MAX** и ваш id в MAX; **корневой сертификат Минцифры** — без него TLS-соединение с
+  API MAX не проходит (подробно — в `docs/surfaces/max.md` после наложения).
+- Около 2 ГБ свободного места на диске и доступ к Интернет.
 
-### Checking the versions, and what to do when yours is older
+### Проверка версий и что делать, если ниже нужной
 
-Check before you install - this is where almost every failure shows up first:
+Проверьте до установки — на этом ловятся почти все неудачи:
 
 ```sh
-go version      # 1.26 or newer; 1.27.0 is fine - 1.27.3 comes with it
-node -v         # 22 or newer; needed only for the web interface
+go version      # нужен 1.26 или новее; 1.27.0 подойдёт — 1.27.3 подтянется сам
+node -v         # 22 или новее; нужен только для интерфейса
 npm -v
 ```
 
-Without Go at all the build never starts, so it has to be there before the first run. A version older
-than 1.27.3 is no obstacle: `go.mod` asks for the `go1.27.3` toolchain, and Go from 1.26 on fetches it
-by itself - with internet access only. That is why the Go 1.27.0 installed by `winget` works: it
-downloads 1.27.3 on the first build. If your distribution has nothing close, take the official archive
-from <https://go.dev/dl/>.
+Совсем без Go сборка не начнётся, поэтому он нужен до первого запуска. Версия ниже 1.27.3 не
+помешает: `go.mod` просит набор инструментов `go1.27.3`, и Go начиная с 1.26 подтянет его сам — но
+только при доступе в Интернет. Так установленный `winget`-ом Go 1.27.0 работает: он докачает 1.27.3
+при первой сборке. Если в вашем дистрибутиве версия заметно старше, берите официальный архив с
+<https://go.dev/dl/>.
 
-**Windows.** The shortest way is the system package installer:
+**Windows.** Проще всего штатным установщиком пакетов:
 
 ```powershell
 winget install --id GoLang.Go -e --accept-source-agreements --accept-package-agreements
 ```
 
-If you need exactly 1.27.3, take the MSI from the same page, as administrator:
-`msiexec /i go1.27.3.windows-amd64.msi /quiet`. Without administrator rights, unpack the archive
-`go1.27.3.windows-amd64.zip` into `%LOCALAPPDATA%\Programs\Go` and add it to PATH once:
+Если нужна ровно 1.27.3 — MSI с той же страницы, от администратора:
+`msiexec /i go1.27.3.windows-amd64.msi /quiet`. Без прав администратора — архив
+`go1.27.3.windows-amd64.zip`: распаковать в `%LOCALAPPDATA%\Programs\Go` и один раз дописать в PATH:
 
 ```powershell
 [Environment]::SetEnvironmentVariable('PATH',
   [Environment]::GetEnvironmentVariable('PATH','User') + ';' + "$env:LOCALAPPDATA\Programs\Go\bin", 'User')
 ```
 
-**Linux and WSL2** - the same official archive (ARM machines take `linux-arm64`):
+**Linux и WSL2** — одинаково, официальный архив (для ARM-машин `linux-arm64`):
 
 ```sh
 curl -LO https://go.dev/dl/go1.27.3.linux-amd64.tar.gz
@@ -73,14 +74,54 @@ echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile
 export PATH=/usr/local/go/bin:$PATH
 ```
 
-**macOS** - if you work on it: `brew install go`, or the `.pkg` from the same page.
+**macOS** — если работаете на нём: `brew install go` или пакет `.pkg` с той же страницы.
 
-After installing, open a **new** terminal window: the old one does not see the new PATH. Then check with
-`go version`, which has to answer `go1.27.3` or newer.
+После установки откройте **новое** окно консоли: старое новый PATH не увидит. Проверка — `go version`,
+ответ должен быть `go1.27.3` или новее.
 
-**Node.js older than 22.** It is needed only to build the web interface. Install it with
-`winget install OpenJS.NodeJS.LTS` on Windows, or from <https://nodejs.org/en/download> (or `nvm`) on
-Linux and WSL2. If you would rather not, build without the interface by dropping the `ui` tag:
+**Если Go поставлен, а накатчик его не видит.** Установщик прописывает PATH в системе, но уже
+открытое окно терминала держит ту среду, с которой стартовало, — `go` в нём просто не находится.
+Убедиться, что дело именно в этом:
+
+```powershell
+where.exe go                                   # пусто?
+Test-Path 'C:\Program Files\Go\bin\go.exe'    # True?
+```
+
+Пустой `where.exe` при существующем файле и означает «PATH не подхвачен». Лечится двумя способами:
+
+- **открыть новое окно** терминала и повторить команду;
+- **обновить PATH в текущем окне** одной строкой:
+
+```powershell
+$machinePath = [Environment]::GetEnvironmentVariable('Path','Machine')
+$userPath    = [Environment]::GetEnvironmentVariable('Path','User')
+$env:Path    = "$machinePath;$userPath"
+go version
+```
+
+На Linux и WSL2 то же самое: `command -v go` и `ls /usr/local/go/bin/go` для проверки, а обновление —
+`export PATH=/usr/local/go/bin:$PATH` (либо новое окно, где прочитается `~/.profile`).
+
+Накатчики ищут Go сами: сначала в PATH, затем в обычных местах — `C:\Program Files\Go\bin`,
+`%LOCALAPPDATA%\Programs\Go\bin`, `/usr/local/go/bin`, `~/go/bin`. Найденный Go берётся только для
+этой сборки, в системе ничего не меняется, и об этом печатается строка «Go не было в PATH, но
+найден…». Если Go лежит совсем в необычном месте, укажите его явно:
+
+```powershell
+$env:MAXGW_GO = 'D:\tools\go\bin\go.exe'
+```
+
+```sh
+MAXGW_GO=/opt/go/bin bash apply.sh --coddy ~/coddy-src --build
+```
+
+Совсем не найден — накатчик остановится и напечатает, как поставить, как проверить и что накат слоя уже
+сделан, повторять его не нужно.
+
+**Node.js ниже 22.** Нужен только для сборки интерфейса. Поставить: `winget install OpenJS.NodeJS.LTS`
+на Windows, на Linux и WSL2 — архив с <https://nodejs.org/en/download> или `nvm`. Если ставить не
+хочется, соберите без интерфейса, убрав тег `ui`:
 
 ```sh
 bash apply.sh --clone ~/coddy-src --build --tags "http,scheduler,memory,cli,gateway.max,swarm"
@@ -91,128 +132,128 @@ powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Clone C:\coddy-src -Build 
   -Tags "http,scheduler,memory,cli,gateway.max,swarm"
 ```
 
-## How to install: four steps
+## Как накатить: четыре шага
 
-You need two things: our layer and the Coddy version the layer was made for.
+Нужны две вещи: наш слой и Coddy той версии, под которую он сделан.
 
-Step 1. Take the layer. It lives in the public repository <https://github.com/mrbp-20/M-G> — as a clone
-or as an archive, whichever suits you. The folder can sit anywhere: `apply.sh` looks for `MANIFEST.tsv`
-and `overlay/` beside itself, and the Coddy clone is passed with `--coddy`.
+Шаг 1. Взять слой. Он лежит в публичном репозитории <https://github.com/mrbp-20/M-G> — клоном или
+архивом, как удобнее. Папку можно положить куда угодно: `apply.sh` ищет `MANIFEST.tsv` и `overlay/`
+рядом с собой, а клон Coddy получает ключом `--coddy`.
 
 ```bash
-# as a clone (git required)
+# клоном (нужен git)
 git clone --depth 1 https://github.com/mrbp-20/M-G.git M-G
 cd M-G
 
-# or as an archive, without git: download and unpack
+# или архивом, без git: скачать и распаковать
 curl -L -o M-G.zip https://github.com/mrbp-20/M-G/archive/refs/heads/main.zip
 unzip M-G.zip && cd M-G-main
 ```
 
-Every command below runs from the layer folder.
+Дальше все команды — из папки слоя.
 
-Step 2. Take the Coddy version the layer was made for:
+Шаг 2. Взять Coddy той версии, под которую сделан слой:
 
 ```bash
 git clone --depth 1 --branch 1.3.62 https://github.com/coddy-project/coddy-agent.git coddy-src
 ```
 
-Step 3. Check compatibility without writing anything:
+Шаг 3. Проверить совместимость, ничего не записывая:
 
 ```bash
 bash apply.sh --coddy coddy-src --check
 ```
 
-Step 4. Apply the layer and build the binary:
+Шаг 4. Наложить слой и собрать бинарь:
 
 ```bash
 bash apply.sh --coddy coddy-src --build
 ```
 
-Steps 2–4 can be replaced by one command: it clones the right Coddy version itself, applies the layer
-and builds the binary.
+Шаги 2–4 можно заменить одной командой: она сама клонирует нужную версию Coddy, наложит слой и
+соберёт бинарь.
 
 ```bash
 bash apply.sh --clone ~/coddy-src --build
 ```
 
-### The same on Windows
+### То же в Windows
 
-First path, the built-in PowerShell (Windows 10 and 11), without WSL. The steps are the same and so are
-the keys; beside `apply.sh` sit `apply.ps1` and the `apply.cmd` wrapper.
+Путь первый, встроенный PowerShell (Windows 10 и 11), без WSL. Шаги те же, ключи те же; рядом с
+`apply.sh` лежат `apply.ps1` и обёртка `apply.cmd`.
 
-Step 1. Take the layer — from the same public repository:
+Шаг 1. Взять слой — из того же публичного репозитория:
 
 ```powershell
-# as a clone (git required)
+# клоном (нужен git)
 git clone --depth 1 https://github.com/mrbp-20/M-G.git C:\M-G
 cd C:\M-G
 
-# or as an archive, without git: download and unpack
+# или архивом, без git: скачать и распаковать
 Invoke-WebRequest -Uri https://github.com/mrbp-20/M-G/archive/refs/heads/main.zip -OutFile M-G.zip
 Expand-Archive -Path M-G.zip -DestinationPath . ; cd M-G-main
 ```
 
-Step 2. Take the Coddy version the layer was made for:
+Шаг 2. Взять Coddy той версии, под которую сделан слой:
 
 ```powershell
 git clone --depth 1 --branch 1.3.62 https://github.com/coddy-project/coddy-agent.git C:\coddy-src
 ```
 
-Step 3. Check compatibility without writing anything:
+Шаг 3. Проверить совместимость, ничего не записывая:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Coddy C:\coddy-src -Check
 ```
 
-Step 4. Apply the layer and build the binary:
+Шаг 4. Наложить слой и собрать бинарь:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Coddy C:\coddy-src -Build
 ```
 
-Steps 2–4 in one command:
+Шаги 2–4 одной командой:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Clone C:\coddy-src -Build
 ```
 
-Shorter still through the wrapper, when the script execution policy already allows it:
+Через обёртку короче, если политика запуска скриптов уже разрешена:
 
 ```bat
 apply.cmd -Clone C:\coddy-src -Build
 ```
 
-Second path, WSL2 (Ubuntu inside Windows): exactly the same bash commands as above work, with one
-correction — keep the layer, the clone and the build in a Linux folder rather than on `/mnt/c`. On
-`/mnt/c` the build is noticeably slower and file permissions break:
+Путь второй, WSL2 (Ubuntu в Windows): работают ровно те же команды bash, что выше, с одной поправкой —
+слой, клон и сборку держать в linux-папке, а не в `/mnt/c`. На `/mnt/c` сборка заметно медленнее и
+ломаются права файлов:
 
 ```bash
 cd ~ && git clone --depth 1 https://github.com/mrbp-20/M-G.git M-G && cd M-G
 bash apply.sh --clone ~/coddy-src --build
 ```
 
-The ready binary is `coddy-src/build/coddy` on Linux and WSL2, and `C:\coddy-src\build\coddy.exe` on
-Windows. Everything after that is the same: set `gateways.max` in `~/.coddy/config.yaml`, check it with
-`./build/coddy serve --dry-run --test-config`, and run `./build/coddy serve`.
+Готовый бинарник — `coddy-src/build/coddy` в Linux и WSL2, `C:\coddy-src\build\coddy.exe` в Windows.
+Дальше одинаково: настроить `gateways.max` в `~/.coddy/config.yaml`, проверить
+`./build/coddy serve --dry-run --test-config` и запустить `./build/coddy serve`.
 
-## Windows: keys and what success looks like
+## Windows: ключи и что печатается при успехе
 
-On Windows `apply.ps1` and the `apply.cmd` wrapper do what `apply.sh` does, and take the same keys —
-`-Coddy`, `-Clone`, `-Check`, `-Build`, `-Tags`, `-Help`; `-Help` prints the usage. The commands
-themselves are in the "How to install" section above. It runs on the built-in PowerShell 5.1 (Windows 10
-and 11) and on PowerShell 7.
+Для Windows рядом лежат `apply.ps1` и обёртка `apply.cmd`: те же действия, что у `apply.sh`, и те же
+ключи — `-Coddy`, `-Clone`, `-Check`, `-Build`, `-Tags`, `-Help`, `-Help` печатает справку. Сами
+команды — в разделе «Как накатить» выше. Работает на встроенном PowerShell 5.1 (Windows 10 и 11) и на
+PowerShell 7.
 
-What has actually been tested, honestly. The installer has been run on a live PowerShell 5.1: the hash
-check and the overlay worked on a fresh Coddy clone. The build has been run in WSL2. The native Windows
-build (`apply.ps1 -Build`, that is `go build` into `build\coddy.exe`) is described and should work, but
-it has never been run on a real Windows: the machine that prepared the layer keeps Go in WSL2. If it
-does not go, that is the first thing to report - then the layer is built in WSL2 and the ready
-`coddy.exe` is carried over.
+Честная оговорка о том, что проверено. Накатчик проверен на живом PowerShell 5.1: сверка хешей и
+наложение слоя отработали на чистом клоне Coddy. Сборка проверена в WSL2. Нативная сборка под
+Windows (`apply.ps1 -Build`, то есть `go build` в `build\coddy.exe`) описана и должна работать, но
+на настоящем Windows ни разу не выполнялась: на машине, где готовился слой, Go стоит в WSL2. Если
+она не пойдёт, это первое, о чём стоит написать — тогда слой собирается в WSL2, а в Windows
+переносится готовый `coddy.exe`.
 
-What it prints on success.
+Что печатается при успехе.
 
-The compatibility check — four lines, nothing written, exit code 0:
+Проверка совместимости — четыре строки, ничего не записано, код возврата 0:
 
 ```
 слой: 161 строка манифеста (с заголовком), база Coddy 1.3.62
@@ -221,7 +262,7 @@ The compatibility check — four lines, nothing written, exit code 0:
 проверка пройдена (-Check: ничего не изменено)
 ```
 
-Applying the layer adds how many files were replaced:
+Наложение слоя — к этим строкам добавляется, сколько файлов заменено:
 
 ```
 наложено файлов: 160
@@ -231,7 +272,7 @@ Applying the layer adds how many files were replaced:
   go build -tags "http,scheduler,memory,cli,gateway.max,swarm" -o build\coddy.exe .\cmd\coddy\
 ```
 
-The build — three lines, and the last one is the proof that the gateway is in the binary:
+Сборка — три строки, последняя и есть проверка, что шлюз в бинаре есть:
 
 ```
 собираю: go build -tags "..." -ldflags "..." -o build\coddy.exe .\cmd\coddy\
@@ -239,8 +280,7 @@ The build — three lines, and the last one is the proof that the gateway is in 
 1.3.62-max-layer
 ```
 
-If the Coddy version is a different one, the script stops before copying anything, changes nothing and
-returns code 2:
+Если версия Coddy другая, скрипт останавливается до копирования, ничего не меняет и возвращает код 2:
 
 ```
 СЛОЙ НЕ ПОДХОДИТ К ЭТОЙ ВЕРСИИ CODDY
@@ -251,128 +291,119 @@ returns code 2:
 Проверьте версию:  git -C "C:\coddy-src" describe --tags --always
 ```
 
-The lines are Russian because the installer speaks to the person in Russian; this page is their English
-translation: "layer: 161 manifest rows (with the header), Coddy base 1.3.62", "clone: …", "check: all 160
-files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 160",
-"building", "done", and, on a mismatch, "THE LAYER DOES NOT FIT THIS CODDY VERSION".
+## Повторный запуск после обрыва
 
-## Running it again after an interruption
+Первый запуск может оборваться на середине: не было Go, пропала сеть, закрыли окно. Повторять ту же
+команду можно и нужно — накатчик смотрит, что уже сделано, и продолжает:
 
-The first run may stop halfway: no Go, the network dropped, the window was closed. Repeating the same
-command is expected - the installer looks at what is already done and continues:
+- каталог из `--clone` / `-Clone` он больше не считает помехой: если это Coddy нужной версии, работа
+  продолжается с него («клон уже на месте… продолжаю с ним»); если там другая версия, скажет об этом
+  и подскажет команду;
+- файлы, которые уже на месте и совпадают со слоем, повторно не копируются — в итоге будет
+  «наложено файлов: 0» и «уже были на месте (прошлый запуск): 160»;
+- файл, испорченный после наката, восстанавливается («восстановлено после обрыва: N»);
+- `--check` / `-Check` на готовом дереве отвечает «слой уже наложен полностью».
 
-- a directory passed to `--clone` / `-Clone` is no longer an obstacle: if it holds the right Coddy
-  version, the work continues in it ("клон уже на месте... продолжаю с ним"); a different version gets
-  a clear message and the command to fix it;
-- files already in place and matching the layer are not copied again, so you end up with
-  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 160";
-- a file damaged after the overlay is restored ("восстановлено после обрыва: N");
-- `--check` / `-Check` on a finished tree answers "слой уже наложен полностью".
+## Что делает apply.sh
 
-## What apply.sh does
+1. **Сверяет версию.** Для каждого из 160 файлов слоя считает sha256 и сравнивает с тем, что
+   записан в `MANIFEST.tsv` как «файл Coddy 1.3.62». Не совпало — слой не накладывается вообще:
+   скрипт печатает, какие файлы разошлись, и подсказывает, какую версию взять.
+2. **Копирует** файлы `overlay/` в клон и после каждого копирования сверяет sha256 с нашим.
+3. **Собирает** по вашему ключу `--build`: `go build -tags "http,scheduler,memory,cli,gateway.max,swarm"`.
 
-1. **Checks the version.** For each of the 160 layer files it computes sha256 and compares it with the
-   one recorded in `MANIFEST.tsv` as the Coddy 1.3.62 file. A mismatch means the layer is not applied at
-   all: the script prints which files diverged and suggests the version to take.
-2. **Copies** the `overlay/` files into the clone and, after each copy, compares sha256 with ours.
-3. **Builds** on your `--build` key: `go build -tags "http,scheduler,memory,cli,gateway.max,swarm"`.
+Полезные ключи: `--check` (только проверка), `--tags "..."` (свой набор тегов), `--help`.
 
-Useful keys: `--check` (check only), `--tags "..."` (your own tag set), `--help`.
-
-Building by hand, without the script:
+Сборка вручную, без скрипта:
 
 ```bash
 cd coddy-src
 go build -tags "http,scheduler,memory,cli,gateway.max,swarm" -o build/coddy ./cmd/coddy/
 
-# with the web interface (needs Node and npm)
+# с веб-интерфейсом (нужен Node и npm)
 make build TAGS="http,ui,scheduler,memory,cli,gateway,swarm"
 ```
 
-## Modularity: the gateway is optional
+## Модульность: шлюз можно не подключать
 
-Like every other Coddy gateway, MAX is switched on by a build tag. Without the tag its code is not in the
-binary at all — a stub takes the adapter's place and answers honestly: "MAX is not built in".
+Как и остальные шлюзы Coddy, MAX включается тегом сборки. Без тега его кода в бинарнике нет вовсе —
+вместо адаптера подставляется заглушка, которая честно отвечает: «MAX is not built in».
 
-| Build tags | What ends up in the binary |
+| Теги сборки | Что попадает в бинарник |
 |---|---|
-| no `gateway*` tags | no gateway at all: the core, the HTTP server and the web interface |
-| `gateway.telegram` | Telegram only |
-| `gateway.max` | MAX only |
-| `gateway.telegram,gateway.max` | exactly two: Telegram and MAX, without Pachca |
-| `gateway` | all gateways: Telegram, MAX and Pachca |
+| без тегов `gateway*` | ни одного шлюза: ядро, HTTP-сервер и веб-интерфейс |
+| `gateway.telegram` | только Телеграм |
+| `gateway.max` | только MAX |
+| `gateway.telegram,gateway.max` | ровно два: Телеграм и MAX, без Пачки |
+| `gateway` | все шлюзы: Телеграм, MAX и Pachca |
 
-## After the overlay
+## После наложения
 
-The gateway's description is `docs/surfaces/max.md` (and the Russian version `docs/ru/surfaces/max.md`):
-settings, behaviour, a live configuration example. The product README of Coddy in the clone is replaced
-by ours as well — it carries the requirements, the modularity table, the root certificate and the
-troubleshooting.
+Описание шлюза — `docs/surfaces/max.md` (и русская версия `docs/ru/surfaces/max.md`): настройки,
+поведение, живой пример конфигурации. Продуктовый README Coddy в клоне тоже заменяется нашим — в нём
+требования, модульность, корневой сертификат и устранение неполадок.
 
-The short version of starting it:
+Коротко о запуске:
 
 ```yaml
 gateways:
   max:
     enable: true
-    ca_file: "/home/<user>/.coddy/mincifry-root.crt"
-    admins: [<your MAX id>]
+    ca_file: "/home/<пользователь>/.coddy/mincifry-root.crt"
+    admins: [<ваш id в MAX>]
 ```
 
 ```bash
-./build/coddy serve --dry-run --test-config -config ~/.coddy/config.yaml   # checks the token
-./build/coddy serve                                                       # runs
+./build/coddy serve --dry-run --test-config -config ~/.coddy/config.yaml   # проверка токена
+./build/coddy serve                                                       # работа
 ```
 
-## Updating
+## Обновление
 
-One command for what is otherwise done by hand. `update.sh` (Unix) and `update.ps1` with the
-`update.cmd` wrapper (Windows) sit beside this file. They ask the Coddy repository for its newest tag,
-the layer repository for its newest commit, and compare the published release with the one in hand:
+Одной командой — то, что иначе делается руками. Рядом лежат `update.sh` (Юникс) и `update.ps1` с
+обёрткой `update.cmd` (Винда). Они спрашивают у репозитория Coddy последнюю метку версии, у
+репозитория слоя — последний коммит, и сравнивают опубликованный выпуск со своим:
 
 ```sh
-bash update.sh --check      # check: ask both repositories and download the layer itself to read its
-                            # release; builds nothing, installs nothing, leaves the service alone
-bash update.sh --apply      # download and build, leave the service alone
-bash update.sh --install    # download, build, install, restart
+bash update.sh --check      # проверить: спросить оба репозитория и скачать сам слой, чтобы
+                            # прочитать его выпуск; не собирает, не ставит, службу не трогает
+bash update.sh --apply      # скачать и собрать, службу не трогать
+bash update.sh --install    # скачать, собрать, поставить и перезапустить
 ```
 
-A release is identified by content, not by a number: the `RELEASE` file lists the sha256 of every
-published file, which is how the script tells whether what is published is newer. A commit hash cannot
-do this job - it cannot live inside the commit it names. Two things are kept apart: `MANIFEST.tsv` binds
-the replaced files to one Coddy version, while `RELEASE` says which package release you hold, and
-therefore notices a change to a root script too.
+Выпуск опознаётся по содержимому, а не по номеру: файл `RELEASE` перечисляет sha256 всех публикуемых
+файлов, отсюда и видно, новее ли опубликованное. Хеш коммита для этого не годится — он не может лежать
+внутри самого коммита. Две вещи не путаются: `MANIFEST.tsv` привязывает заменяемые файлы к версии
+Coddy, а `RELEASE` говорит, какой выпуск пакета перед вами, и потому замечает и правку корневого
+скрипта.
 
-On Windows the same: `update.cmd -Check`, `-Apply`, `-Install`; `-Dir` picks the clone folder, `-BinDir`
-where the binary goes, `-StartScript` what restarts it.
+На Винде то же самое: `update.cmd -Check`, `-Apply`, `-Install`; каталог для клонов задаётся ключом
+`-Dir`, куда ставить бинарник — `-BinDir`, чем перезапускать — `-StartScript`.
 
-Two refusals are built in on purpose. When Coddy has a tag newer than `BASE_TAG`, the script stops with
-exit code 3 and says a new layer is needed: it will not apply a layer to a version it was not built for,
-the hash check would refuse anyway, and it is better to hear that at once. And a restart happens only
-with `--install` / `-Install` - the other two keys never touch a running service.
+Два отказа встроены намеренно. Если у Coddy появилась метка новее, чем `BASE_TAG`, скрипт
+останавливается с кодом 3 и говорит, что нужен новый слой: накатывать слой на чужую версию он не
+будет, сверка хешей всё равно откажет, и лучше узнать об этом сразу. И перезапуск бывает только по
+`--install` / `-Install` — остальные два ключа работающую службу не трогают.
 
-- **A new Coddy is out.** This layer will not fit it: `apply.sh` refuses to apply it and names the files
-  that diverged. You need a layer built for the new version (in `VERSION` its `BASE_TAG` will differ).
-- **A new layer is out.** It is applied over the same Coddy version: `--apply` builds it, `--install`
-  builds, installs and restarts.
+- **Вышел новый Coddy.** Этот слой к нему не подойдёт: `apply.sh` откажется накладывать его и назовёт
+  разошедшиеся файлы. Нужен слой, собранный под новую версию (в `VERSION` будет другой `BASE_TAG`).
+- **Вышел новый слой.** Кладётся поверх той же версии Coddy: `--apply` соберёт, `--install` соберёт,
+  поставит и перезапустит.
 
-## Troubleshooting
+## Устранение неполадок
 
-- **"THE LAYER DOES NOT FIT THIS CODDY VERSION".** The clone is not 1.3.62. Check it with
+- **«СЛОЙ НЕ ПОДХОДИТ К ЭТОЙ ВЕРСИИ CODDY».** В клоне не 1.3.62. Проверьте:
   `git -C coddy-src describe --tags --always`.
-- **`go: not found`.** Go is not in `PATH`: `export PATH=$PATH:/usr/local/go/bin`.
-- **`x509: certificate signed by unknown authority`.** `ca_file` with the MinCifry root is not set.
-- **The interface does not build.** Node/npm is missing or older than 22; build without the interface by
-  leaving out the `ui` tag.
-- **The bot answers in a private chat but stays silent in a group.** Look at `default_access` and `chats`
-  in the configuration.
+- **`go: not found`.** Go не в `PATH`: `export PATH=$PATH:/usr/local/go/bin`.
+- **`x509: certificate signed by unknown authority`.** Не указан `ca_file` с корнем Минцифры.
+- **Интерфейс не собирается.** Нет Node/npm или он старше 22; без интерфейса собирайте без тега `ui`.
+- **Бот отвечает в личном чате, но молчит в группе.** Смотрите `default_access` и `chats` в конфиге.
 
-## License and authors
+## Лицензия и авторы
 
-MIT. Coddy — `Copyright (c) 2026 Pavel Rykov`.
-Max-Gate-Coddy — `Copyright (c) 2026 Versta-AI-Coder and Vladimir A.G.`
+MIT. Coddy — `Copyright (c) 2026 Pavel Rykov`. 
+Max-Gate-Coddy —`Copyright (c) 2026 Versta-AI-Coder and Vladimir A.G.`
 
-`LICENSE` sits in two places: the package root and inside `overlay/LICENSE`. The text is the same. The
-root one is the licence of the package itself; the inner one replaces `LICENSE` in the Coddy tree when
-the layer is applied, so the built product carries the same authorship line. Change one, change the
-other, or they drift apart.
+`LICENSE` лежит в двух местах: в корне пакета и внутри `overlay/LICENSE`. Текст у них один и тот же.
+Корневой — лицензия самого пакета; внутренний при накате заменяет `LICENSE` в дереве Coddy, чтобы
+собранный продукт нёс ту же строку авторства. Правя один, поправьте и второй, иначе они разойдутся. 

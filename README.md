@@ -78,6 +78,46 @@ export PATH=/usr/local/go/bin:$PATH
 After installing, open a **new** terminal window: the old one does not see the new PATH. Then check with
 `go version`, which has to answer `go1.27.3` or newer.
 
+**When Go is installed but the installer cannot see it.** The installer writes PATH into the system, but a
+terminal window that is already open keeps the environment it started with, so `go` is simply not there.
+To confirm that this is the case:
+
+```powershell
+where.exe go                                   # empty?
+Test-Path 'C:\Program Files\Go\bin\go.exe'    # True?
+```
+
+An empty `where.exe` next to an existing file is exactly "PATH not picked up". Two ways out:
+
+- **open a new terminal window** and repeat the command;
+- **refresh PATH in the current window** with one line:
+
+```powershell
+$machinePath = [Environment]::GetEnvironmentVariable('Path','Machine')
+$userPath    = [Environment]::GetEnvironmentVariable('Path','User')
+$env:Path    = "$machinePath;$userPath"
+go version
+```
+
+On Linux and WSL2 the same: `command -v go` and `ls /usr/local/go/bin/go` to check, and
+`export PATH=/usr/local/go/bin:$PATH` to refresh (or a new window, which reads `~/.profile`).
+
+The installers look for Go by themselves: first in PATH, then in the usual places -
+`C:\Program Files\Go\bin`, `%LOCALAPPDATA%\Programs\Go\bin`, `/usr/local/go/bin`, `~/go/bin`. What
+they find is used for that build only, nothing in the system changes, and a line says so: «Go не было в
+PATH, но найден…». If your Go sits somewhere unusual, point at it:
+
+```powershell
+$env:MAXGW_GO = 'D:\tools\go\bin\go.exe'
+```
+
+```sh
+MAXGW_GO=/opt/go/bin bash apply.sh --coddy ~/coddy-src --build
+```
+
+If it is nowhere to be found, the installer stops and prints how to install it, how to check it, and that
+the overlay itself is already applied and does not need repeating.
+
 **Node.js older than 22.** It is needed only to build the web interface. Install it with
 `winget install OpenJS.NodeJS.LTS` on Windows, or from <https://nodejs.org/en/download> (or `nvm`) on
 Linux and WSL2. If you would rather not, build without the interface by dropping the `ui` tag:
