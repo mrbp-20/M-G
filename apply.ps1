@@ -298,10 +298,9 @@ function Find-Go {
         Say "ошибка: MAXGW_GO указывает на $($env:MAXGW_GO), а go там нет."
         return $false
     }
-    # 2. Обычный случай: Go в PATH.
-    if (Get-Command go -ErrorAction SilentlyContinue) { return $true }
-    # 3. Список мест, заданный человеком (MAXGW_GO_DIRS, через «;»). Он же
-    #    используется проверками, чтобы не зависеть от чужой установки Go.
+    # 2. Список мест, заданный человеком (MAXGW_GO_DIRS, через «;»). Если он задан,
+    #    искать больше негде: человек сказал, где лежит Go. Он же используется
+    #    проверками, чтобы не зависеть от чужой установки Go.
     $dirs = New-Object System.Collections.Generic.List[string]
     if ($env:MAXGW_GO_DIRS) {
         foreach ($dir in ($env:MAXGW_GO_DIRS -split ';')) { if ($dir) { $dirs.Add($dir) } }
@@ -323,6 +322,9 @@ function Find-Go {
             return $true
         }
     }
+    if ($env:MAXGW_GO_DIRS) { return $false }
+    # 3. Обычный случай: Go в PATH.
+    if (Get-Command go -ErrorAction SilentlyContinue) { return $true }
     return $false
 }
 

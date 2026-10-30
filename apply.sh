@@ -268,11 +268,8 @@ find_go() {
 		say "ошибка: MAXGW_GO указывает на $MAXGW_GO, а go там нет." >&2
 		return 1
 	fi
-	# 2. Обычный случай: Go в PATH.
-	if command -v go >/dev/null 2>&1; then
-		return 0
-	fi
-	# 3. Список мест, заданный человеком (MAXGW_GO_DIRS, через двоеточия). Он же
+	# 2. Список мест, заданный человеком (MAXGW_GO_DIRS, через двоеточия). Если он
+	#    задан, искать больше негде: человек сказал, где лежит Go. Он же
 	#    используется проверками, чтобы не зависеть от чужой установки Go.
 	if [ -n "${MAXGW_GO_DIRS:-}" ]; then
 		local old_ifs="$IFS"
@@ -288,6 +285,10 @@ find_go() {
 		done
 		IFS="$old_ifs"
 		return 1
+	fi
+	# 3. Обычный случай: Go в PATH.
+	if command -v go >/dev/null 2>&1; then
+		return 0
 	fi
 	# 4. Обычные места установки.
 	for dir in /usr/local/go/bin /usr/lib/go/bin /opt/go/bin /snap/bin "$HOME/go/bin" "$HOME/sdk/go/bin" /usr/local/bin /usr/bin; do
