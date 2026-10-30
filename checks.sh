@@ -18,6 +18,18 @@ ok() { printf '  ок: %s\n' "$*"; }
 bad() { printf '  ПРОВАЛ: %s\n' "$*"; fail=1; }
 need() { [ -e "$1" ] && ok "$1 на месте" || bad "нет $1"; }
 
+# Список публикации — рабочий файл пакета, в репозиторий он не идёт. В
+# опубликованном клоне его нет, и там список публикации — это сам индекс git:
+# по нему и проверяем, чтобы сторож работал и у клиента, и в CI пакета.
+PUBLISH_LIST=".publish-allowlist"
+TEMP_LIST=""
+if [ ! -f "$PUBLISH_LIST" ] && [ -d .git ] && git rev-parse --git-dir >/dev/null 2>&1; then
+	PUBLISH_LIST="$(mktemp)"
+	TEMP_LIST="$PUBLISH_LIST"
+	git ls-files | sort >"$PUBLISH_LIST"
+fi
+trap '[ -n "$TEMP_LIST" ] && rm -f "$TEMP_LIST"' EXIT
+
 echo "== состав пакета =="
 for f in VERSION MANIFEST.tsv apply.sh apply.ps1 apply.cmd update.sh update.ps1 update.cmd LICENSE README.md README.ru.md; do
 	need "$f"
@@ -59,25 +71,25 @@ echo "== список публикации =="
 # Разборы аудита лежать в каталоге пакета могут — оператор решил, что удалять их
 # заранее не нужно. Провал не в том, что файл есть, а в том, что он попал в
 # список публикации: выкладка идёт по allowlist, а не «git add .».
-if [ -f .publish-allowlist ]; then
+if [ -f "$PUBLISH_LIST" ]; then
 	listed=0; gone=0
 	while IFS= read -r path; do
 		[ -n "$path" ] || continue
 		listed=$((listed + 1))
 		[ -e "$path" ] || { gone=$((gone + 1)); printf '  нет в пакете: %s\n' "$path"; }
-	done < .publish-allowlist
+	done <"$PUBLISH_LIST"
 	[ "$gone" -eq 0 ] && ok "все $listed файлов из списка на месте" || bad "из списка публикации отсутствует: $gone"
-	if grep -qE '(^|/)PRE-PUBLICATION-' .publish-allowlist; then
+	if grep -qE '(^|/)PRE-PUBLICATION-' "$PUBLISH_LIST"; then
 		bad "в список публикации попал разбор аудита"
 	else
 		ok "разборов в списке публикации нет"
 	fi
-	if grep -qE 'GATEWAY-BRIEF' .publish-allowlist; then
+	if grep -qE 'GATEWAY-BRIEF' "$PUBLISH_LIST"; then
 		bad "в список публикации попал бриф"
 	else
 		ok "брифа в списке публикации нет"
 	fi
-	extra="$(find . -maxdepth 1 -type f -printf '%f\n' | sort | grep -vxF -f .publish-allowlist | grep -v '^\.publish-allowlist$' | tr '\n' ' ')"
+	extra="$(find . -maxdepth 1 -type f -printf '%f\n' | sort | grep -vxF -f "$PUBLISH_LIST" | grep -v '^\.publish-allowlist$' | tr '\n' ' ')"
 	[ -n "$extra" ] && printf '  не публикуется (лежит в папке): %s\n' "$extra"
 else
 	bad "нет .publish-allowlist: список публикации не сформирован"
@@ -87,14 +99,14 @@ fi
 echo "== внутренние материалы не публикуются =="
 # DOCS_W и разборы аудита — наше внутреннее обсуждение (Верста, Кими). В
 # публичный репозиторий они попасть не должны ни файлом, ни строкой в списке.
-if grep -qE 'DOCS_W|PRE-PUBLICATION' .publish-allowlist 2>/dev/null; then
+if grep -qE 'DOCS_W|PRE-PUBLICATION' "$PUBLISH_LIST" 2>/dev/null; then
 	bad "в списке публикации внутренние материалы (DOCS_W или разборы)"
 else
 	ok "внутренних материалов в списке публикации нет"
 fi
 if [ -d .git ]; then
 	tracked="$(git ls-files | sort)"
-	listed="$(sort .publish-allowlist)"
+	listed="$(sort "$PUBLISH_LIST")"
 	if [ "$tracked" = "$listed" ]; then
 		ok "в индексе git ровно публикуемые файлы ($(printf '%s\n' "$tracked" | wc -l | tr -d ' '))"
 	else
@@ -115,7 +127,7 @@ echo "== RELEASE против пакета =="
 # RELEASE — опознание выпуска: он обязан перечислять ровно публикуемые файлы
 # (кроме себя) и не врать про их хеши. Иначе устаревший RELEASE спрячет
 # изменённый файл — та же тишина, что была с невидимыми корневыми правками.
-if [ -f RELEASE ] && [ -f .publish-allowlist ]; then
+if [ -f RELEASE ] && [ -f "$PUBLISH_LIST" ]; then
 	rel_count=0; rel_wrong=0; rel_missing=0
 	while read -r rel_hash rel_path; do
 		case "$rel_hash" in \#*|"") continue ;; esac
@@ -130,7 +142,7 @@ if [ -f RELEASE ] && [ -f .publish-allowlist ]; then
 			printf '  хеш не совпал: %s\n' "$rel_path"
 		fi
 	done <RELEASE
-	want="$(grep -vxF 'RELEASE' .publish-allowlist | sort)"
+	want="$(grep -vxF 'RELEASE' "$PUBLISH_LIST" | sort)"
 	got="$(grep -v '^#' RELEASE | awk '{$1=""; sub(/^ +/, ""); print}' | sort)"
 	if [ "$want" = "$got" ]; then
 		ok "RELEASE перечисляет ровно публикуемые файлы ($rel_count)"
