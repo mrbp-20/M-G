@@ -74,8 +74,6 @@ echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile
 export PATH=/usr/local/go/bin:$PATH
 ```
 
-**macOS** — если работаете на нём: `brew install go` или пакет `.pkg` с той же страницы.
-
 После установки откройте **новое** окно консоли: старое новый PATH не увидит. Проверка — `go version`,
 ответ должен быть `go1.27.3` или новее.
 
@@ -375,10 +373,8 @@ gateways:
 | Windows | `C:\Users\<имя>\.coddy\config.yaml` | `C:\Users\<имя>\.coddy\.env` |
 | Linux | `/home/<имя>/.coddy/config.yaml` | `/home/<имя>/.coddy/.env` |
 | WSL2 | `/home/<имя>/.coddy/config.yaml` — в linux-папке, не на `/mnt/c` | `/home/<имя>/.coddy/.env` |
-| macOS | `/Users/<имя>/.coddy/config.yaml` | `/Users/<имя>/.coddy/.env` |
 
-Путь для macOS взят из того же кода, что и для Linux (`$HOME` + `.coddy`), на живой macOS не
-проверялся. Другое место задаётся ключом `-home <каталог>` или переменной `CODDY_HOME`; другой файл —
+Другое место задаётся ключом `-home <каталог>` или переменной `CODDY_HOME`; другой файл —
 ключом `-config <путь>` или переменной `CODDY_CONFIG`. Файл `.env` читается первым, но значения из
 окружения сильнее его.
 

@@ -310,7 +310,6 @@ if ! find_go; then
 	say "  sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.27.3.linux-amd64.tar.gz" >&2
 	say "  echo 'export PATH=/usr/local/go/bin:\$PATH' >> ~/.profile" >&2
 	say "" >&2
-	say "Поставить (macOS): brew install go   или пакет .pkg с https://go.dev/dl/" >&2
 	say "" >&2
 	say "Проверить:  command -v go && go version" >&2
 	say "Обновить PATH в этом окне:  export PATH=/usr/local/go/bin:\$PATH" >&2

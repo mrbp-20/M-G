@@ -73,8 +73,6 @@ echo 'export PATH=/usr/local/go/bin:$PATH' >> ~/.profile
 export PATH=/usr/local/go/bin:$PATH
 ```
 
-**macOS** - if you work on it: `brew install go`, or the `.pkg` from the same page.
-
 After installing, open a **new** terminal window: the old one does not see the new PATH. Then check with
 `go version`, which has to answer `go1.27.3` or newer.
 
@@ -380,10 +378,8 @@ The Coddy configuration is one file, `config.yaml`, in the Coddy home directory.
 | Windows | `C:\Users\<name>\.coddy\config.yaml` | `C:\Users\<name>\.coddy\.env` |
 | Linux | `/home/<name>/.coddy/config.yaml` | `/home/<name>/.coddy/.env` |
 | WSL2 | `/home/<name>/.coddy/config.yaml` - in the Linux folder, not on `/mnt/c` | `/home/<name>/.coddy/.env` |
-| macOS | `/Users/<name>/.coddy/config.yaml` | `/Users/<name>/.coddy/.env` |
 
-The macOS path comes from the same code as Linux (`$HOME` plus `.coddy`) and has not been checked on a
-live macOS. Another place is set with `-home <dir>` or `CODDY_HOME`; another file with `-config <path>`
+Another place is set with `-home <dir>` or `CODDY_HOME`; another file with `-config <path>`
 or `CODDY_CONFIG`. The `.env` file is read first, but values from the environment win over it.
 
 In order:
