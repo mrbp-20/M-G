@@ -232,6 +232,12 @@ cd ~ && git clone --depth 1 https://github.com/mrbp-20/M-G.git M-G && cd M-G
 bash apply.sh --clone ~/coddy-src --build
 ```
 
+**The first build goes online and takes time.** Go fetches the toolchain (`go1.27.3`) and the
+dependencies - several minutes and noticeable traffic. A network drop in the middle of a download does
+not damage the overlay: the layer files are already in place and whatever was downloaded stays in the
+module cache, so repeating the same command continues from there. What to do when it keeps breaking is
+under "The build broke while downloading modules" in "Troubleshooting".
+
 The ready binary is `coddy-src/build/coddy` on Linux and WSL2, and `C:\coddy-src\build\coddy.exe` on
 Windows. Everything after that is the same: set `gateways.max` in `~/.coddy/config.yaml`, check it with
 `./build/coddy serve --dry-run --test-config`, and run `./build/coddy serve`.
@@ -244,11 +250,11 @@ themselves are in the "How to install" section above. It runs on the built-in Po
 and 11) and on PowerShell 7.
 
 What has actually been tested, honestly. The installer has been run on a live PowerShell 5.1: the hash
-check and the overlay worked on a fresh Coddy clone. The build has been run in WSL2. The native Windows
-build (`apply.ps1 -Build`, that is `go build` into `build\coddy.exe`) is described and should work, but
-it has never been run on a real Windows: the machine that prepared the layer keeps Go in WSL2. If it
-does not go, that is the first thing to report - then the layer is built in WSL2 and the ready
-`coddy.exe` is carried over.
+check and the overlay worked on a fresh Coddy clone. The native Windows build (`apply.ps1 -Build`, that
+is `go build` into `build\coddy.exe`) was run on a real Windows on 30.10.2026: the binary built and
+answered `1.3.62-max-layer`, the first build fetching the `go1.27.3` toolchain and the dependencies. The
+build in WSL2 has been run as well. If it does not go, that is the first thing to report - then the
+layer is built in WSL2 and the ready `coddy.exe` is carried over.
 
 What it prints on success.
 
@@ -402,6 +408,17 @@ with `--install` / `-Install` - the other two keys never touch a running service
   `git -C coddy-src describe --tags --always`.
 - **`go: not found`.** Go is not in `PATH`: `export PATH=$PATH:/usr/local/go/bin`.
 - **`x509: certificate signed by unknown authority`.** `ca_file` with the MinCifry root is not set.
+- **The build broke while downloading modules.** The output holds `wsarecv: An existing connection was
+  forcibly closed by the remote host` or `connection reset by peer`: the network, a VPN or an antivirus
+  with TLS inspection cut the transfer. This is not the layer and not a broken install - whatever was
+  downloaded stays in the cache, so first simply repeat the same command. If it breaks again, download
+  the modules on their own: `for i in 1 2 3 4 5 6; do go mod download && break; sleep 5; done` in bash,
+  `1..6 | ForEach-Object { go mod download; if ($LASTEXITCODE -eq 0) { break } }` in PowerShell, then
+  run `--build` / `-Build` again. If that does not help, take another route: `GOPROXY=direct`
+  (`$env:GOPROXY = 'direct'` in PowerShell) goes to the original sources on GitHub; a mirror such as
+  `https://goproxy.io,direct` also works, but it is a third-party service. To see who breaks the
+  connection, use a plain `curl -I` on an archive address: if curl breaks the same way, the network or
+  the antivirus is at fault, not Go.
 - **The interface does not build.** Node/npm is missing or older than 22; build without the interface by
   leaving out the `ui` tag.
 - **The bot answers in a private chat but stays silent in a group.** Look at `default_access` and `chats`
