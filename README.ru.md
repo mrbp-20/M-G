@@ -365,6 +365,74 @@ gateways:
 ./build/coddy serve                                                       # работа
 ```
 
+## Первый запуск после сборки
+
+Конфиг Coddy — один файл `config.yaml` в домашнем каталоге Coddy. Домашний каталог — это `%USERPROFILE%`
+на Windows и `$HOME` на остальных системах, плюс `.coddy`:
+
+| Система | Конфиг | Файл с токенами |
+|---|---|---|
+| Windows | `C:\Users\<имя>\.coddy\config.yaml` | `C:\Users\<имя>\.coddy\.env` |
+| Linux | `/home/<имя>/.coddy/config.yaml` | `/home/<имя>/.coddy/.env` |
+| WSL2 | `/home/<имя>/.coddy/config.yaml` — в linux-папке, не на `/mnt/c` | `/home/<имя>/.coddy/.env` |
+| macOS | `/Users/<имя>/.coddy/config.yaml` | `/Users/<имя>/.coddy/.env` |
+
+Путь для macOS взят из того же кода, что и для Linux (`$HOME` + `.coddy`), на живой macOS не
+проверялся. Другое место задаётся ключом `-home <каталог>` или переменной `CODDY_HOME`; другой файл —
+ключом `-config <путь>` или переменной `CODDY_CONFIG`. Файл `.env` читается первым, но значения из
+окружения сильнее его.
+
+Порядок:
+
+1. Взять образец всех ключей из клона Coddy — `config.example.yaml` — и положить его как `config.yaml`
+   в домашний каталог:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$env:USERPROFILE\.coddy" | Out-Null
+   Copy-Item C:\coddy-src\config.example.yaml "$env:USERPROFILE\.coddy\config.yaml"
+   ```
+
+   ```bash
+   mkdir -p ~/.coddy && cp ~/coddy-src/config.example.yaml ~/.coddy/config.yaml
+   ```
+
+2. Вписать модели: разделы `providers` и `models` — без них агенту нечем отвечать.
+3. Включить шлюз MAX в `config.yaml` (Описание всех ключей — `docs/surfaces/max.md` в клоне):
+
+   ```yaml
+   gateways:
+     max:
+       enable: true
+       ca_file: "C:/Users/<имя>/.coddy/mincifry-root.crt"
+       admins: [<ваш id в MAX>]
+   ```
+
+4. Положить рядом два файла: корневой сертификат Минцифры (`mincifry-root.crt`) и `.env` с токеном
+   бота (`MAX_BOT_TOKEN=...`). Токен можно вписать и прямо в `gateways.max.token`, но `.env` удобнее.
+5. Проверить до запуска, ничего не поднимая:
+
+   ```powershell
+   C:\coddy-src\build\coddy.exe serve --dry-run --test-config
+   ```
+
+6. Запустить:
+
+   ```powershell
+   C:\coddy-src\build\coddy.exe serve -cwd=C:\coddy-work
+   ```
+
+   Первая строка вывода говорит, по какому адресу открывается браузер (по умолчанию
+   `http://127.0.0.1:12345`); порт меняется ключом `-P`, адрес — `-H`.
+7. Признак, что шлюз MAX поднялся, — строка `max bot connected` в выводе и в журнале. После неё
+   напишите боту в личный чат: он ответит.
+
+Если конфига нет, `serve` всё равно стартует, но `--test-config` прямо скажет «config file not found» —
+это и есть подсказка, что пора создать файл. Для постоянной работы есть ключ `-daemon`: процесс уходит
+в фон и перезапускается сам, если упадёт.
+
+И главное про сборку: теги решают, что поднимется. Набор `http,scheduler,memory,cli,gateway.max,swarm`
+даёт только шлюз MAX; если собрать без `gateway.max`, бот не поднимется даже с верным `config.yaml`.
+
 ## Обновление
 
 Одной командой — то, что иначе делается руками. Рядом лежат `update.sh` (Юникс) и `update.ps1` с

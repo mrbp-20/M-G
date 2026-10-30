@@ -370,6 +370,77 @@ gateways:
 ./build/coddy serve                                                       # runs
 ```
 
+## The first run after the build
+
+The Coddy configuration is one file, `config.yaml`, in the Coddy home directory. That home is
+`%USERPROFILE%` on Windows and `$HOME` elsewhere, plus `.coddy`:
+
+| System | Configuration | Token file |
+|---|---|---|
+| Windows | `C:\Users\<name>\.coddy\config.yaml` | `C:\Users\<name>\.coddy\.env` |
+| Linux | `/home/<name>/.coddy/config.yaml` | `/home/<name>/.coddy/.env` |
+| WSL2 | `/home/<name>/.coddy/config.yaml` - in the Linux folder, not on `/mnt/c` | `/home/<name>/.coddy/.env` |
+| macOS | `/Users/<name>/.coddy/config.yaml` | `/Users/<name>/.coddy/.env` |
+
+The macOS path comes from the same code as Linux (`$HOME` plus `.coddy`) and has not been checked on a
+live macOS. Another place is set with `-home <dir>` or `CODDY_HOME`; another file with `-config <path>`
+or `CODDY_CONFIG`. The `.env` file is read first, but values from the environment win over it.
+
+In order:
+
+1. Take the sample of every key from the Coddy clone - `config.example.yaml` - and put it in place as
+   `config.yaml` in the home directory:
+
+   ```powershell
+   New-Item -ItemType Directory -Force "$env:USERPROFILE\.coddy" | Out-Null
+   Copy-Item C:\coddy-src\config.example.yaml "$env:USERPROFILE\.coddy\config.yaml"
+   ```
+
+   ```bash
+   mkdir -p ~/.coddy && cp ~/coddy-src/config.example.yaml ~/.coddy/config.yaml
+   ```
+
+2. Fill in the models: the `providers` and `models` sections - without them the agent has nothing to
+   answer with.
+3. Turn the MAX gateway on in `config.yaml` (every key is described in `docs/surfaces/max.md` in the
+   clone):
+
+   ```yaml
+   gateways:
+     max:
+       enable: true
+       ca_file: "C:/Users/<name>/.coddy/mincifry-root.crt"
+       admins: [<your MAX id>]
+   ```
+
+4. Put two files beside it: the MinCifry root certificate (`mincifry-root.crt`) and `.env` with the bot
+   token (`MAX_BOT_TOKEN=...`). The token may also go straight into `gateways.max.token`, but `.env` is
+   more convenient.
+5. Check before starting, without bringing anything up:
+
+   ```powershell
+   C:\coddy-src\build\coddy.exe serve --dry-run --test-config
+   ```
+
+6. Start it:
+
+   ```powershell
+   C:\coddy-src\build\coddy.exe serve -cwd=C:\coddy-work
+   ```
+
+   The first line of the output names the address for the browser (`http://127.0.0.1:12345` by
+   default); the port changes with `-P`, the address with `-H`.
+7. The sign that the MAX gateway is up is the line `max bot connected` in the output and in the log.
+   After it, write to the bot in a private chat and it answers.
+
+Without a configuration file `serve` still starts, but `--test-config` says "config file not found" right
+away - that is the hint that the file is due. For permanent work there is `-daemon`: the process goes to
+the background and restarts itself if it dies.
+
+And the main thing about the build: the tags decide what comes up. The set
+`http,scheduler,memory,cli,gateway.max,swarm` gives the MAX gateway only; built without `gateway.max`,
+the bot does not come up even with a correct `config.yaml`.
+
 ## Updating
 
 One command for what is otherwise done by hand. `update.sh` (Unix) and `update.ps1` with the
