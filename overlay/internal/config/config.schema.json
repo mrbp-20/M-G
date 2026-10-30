@@ -1,0 +1,2075 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://coddy.dev/config.schema.json",
+  "title": "Coddy config.yaml",
+  "description": "Configuration file for the Coddy agent (default location: ~/.coddy/config.yaml). Reference: https://coddy.dev/docs/reference/config. Any string value may reference environment variables with ${VAR_NAME}. ${CODDY_HOME} is expanded by the loader; ${CWD} stays in the value and is expanded per session by whatever reads the path (skills.dirs, subagents.dirs, hooks.files, prompts.dir), except in the process-scoped sessions.dir, memory.dir and logger.file, where it means the default working directory. MCP servers are not declared here: they live in <home>/mcp.json and the project's .coddy/mcp.json, and an old mcp_servers key is moved into <home>/mcp.json on load.",
+  "type": "object",
+  "additionalProperties": false,
+  "properties": {
+    "providers": {
+      "type": "array",
+      "title": "LLM providers",
+      "description": "API credentials and transport selection for upstream LLM vendors. When api_key is empty, the runtime reads the NAME_API_KEY environment variable (NAME is the provider name in uppercase with hyphens mapped to underscores); a row of type \"codex\" signs in with ChatGPT and reads no key.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "type"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Logical id used as the first segment of models[].model. ASCII letters, digits, hyphen, underscore; must start with a letter.",
+            "pattern": "^[a-zA-Z][a-zA-Z0-9_\\-]*$"
+          },
+          "type": {
+            "type": "string",
+            "description": "Wire protocol for this provider. Use \"openai\" for configurable OpenAI-compatible endpoints (OpenAI, DeepSeek, Groq, Ollama, llama.cpp, LM Studio), \"anthropic\" for Anthropic, \"neuraldeep\" for NeuralDeep's OpenAI-compatible API at one of its two official deployments (selected with api_base), \"opencode\" for the OpenCode Go/Console gateway (account device login or a service account key, its models served over the Responses, Anthropic, Google or OpenAI-compatible protocol per model id and gateway; api_base picks Go or Console), \"codex\" for ChatGPT OAuth against the official Codex backend (Responses API), \"devin\" for a Devin (Cognition) account signed in through the browser or the Devin CLI, served by the Devin API server (see https://coddy.dev/docs/features/devin), or \"acp\" for a local agent that speaks the Agent Client Protocol on stdio (claude-agent-acp, codex-acp, opencode acp, coddy acp), named in the acp block; see https://coddy.dev/docs/features/acp-provider.",
+            "enum": [
+              "openai",
+              "anthropic",
+              "neuraldeep",
+              "opencode",
+              "codex",
+              "devin",
+              "acp"
+            ]
+          },
+          "api_base": {
+            "type": "string",
+            "description": "Optional base URL override. For type \"openai\" include /v1 (e.g. http://localhost:11434/v1); for type \"anthropic\" an Anthropic-compatible gateway (default https://api.anthropic.com). For type \"neuraldeep\" it selects the deployment: https://api.neuraldeep.ru/v1 (Russia, the default) or https://api.neuraldeep.tech/v1 (the international mirror); any other value falls back to the default. For type \"opencode\" it selects the gateway: https://opencode.ai/inference/go/v1 (the Go subscription, the default) or https://opencode.ai/inference/v1 (pay-as-you-go Console); any other value falls back to the default. Ignored for types \"codex\" and \"devin\", which always use their official endpoints, and for type \"acp\", whose agent runs on this machine."
+          },
+          "api_key": {
+            "type": "string",
+            "description": "Provider secret. A literal key, a \"${ENV}\" reference expanded at load time, or empty to read NAME_API_KEY at LLM call time. Resolution order: api_key -> api_key_command stdout -> NAME_API_KEY. For type \"devin\" it is a Devin session token and, when set, wins over the browser login and the Devin CLI login. For type \"opencode\" an explicit key wins over the login `coddy providers login opencode` stored. Ignored for type \"codex\", which signs in with ChatGPT, and for type \"acp\", whose agent signs in on its own."
+          },
+          "api_key_command": {
+            "type": "string",
+            "description": "Optional credential-helper command. When api_key is empty it runs via the detected host shell (pwsh, powershell, or cmd on Windows; bash or sh elsewhere) and the trimmed stdout is used as the key. On failure resolution falls back to NAME_API_KEY. Never run for types \"codex\" and \"acp\", which take no key."
+          },
+          "proxy": {
+            "type": "string",
+            "description": "inherit (the default, the same as leaving the key out), none, or a proxy URL: http://, https://, socks5:// or socks5h://. inherit follows the proxy the environment of the Coddy process names - HTTPS_PROXY, HTTP_PROXY and NO_PROXY, never for a loopback address; ALL_PROXY is not read. none connects directly and ignores those variables. A proxy URL sends every request of this row through that proxy, NO_PROXY and loopback included; with SOCKS the proxy resolves host names. The setting covers every request of the provider: its completions, its model list, its account usage and its sign-in. For type \"acp\" the agent makes its own requests: inherit leaves the proxy variables of Coddy's environment as they are, ALL_PROXY included, a proxy URL is passed to it as HTTPS_PROXY and HTTP_PROXY, with NO_PROXY set to the loopback addresses and ALL_PROXY removed, none removes the proxy variables from its environment, and whether the agent honours them is up to the agent.",
+            "default": "inherit"
+          },
+          "timeout_ms": {
+            "type": "integer",
+            "description": "Optional bound on each LLM HTTP request to this provider, including the streamed body read; for type \"acp\", on each prompt the agent answers. 0 (the default) sets no client timeout, so slow prompt processing on large contexts is never cut short.",
+            "default": 0,
+            "minimum": 0
+          },
+          "usage_limits_panel": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Show this provider's account usage panel (the console footer line and /usage, the usage section and banner in the web UI) and read the provider's usage endpoint for it (GET /v1/limits for type neuraldeep, the Codex backend's usage endpoint for type codex, the seat-management status RPC for type devin). Omit or true keeps the panel on; false hides it and stops those reads for this row. Only providers whose type has a usage source are affected.",
+            "default": true
+          },
+          "acp": {
+            "type": [
+              "object",
+              "null"
+            ],
+            "additionalProperties": false,
+            "description": "The agent a provider of type \"acp\" runs: a local program that speaks the Agent Client Protocol on stdio, started on the first call and kept for every session of the row (one per session with process: per_session, one per workspace when a value names ${CWD}), stopped after idle_timeout_ms without a call. Read only on a row of type acp; see https://coddy.dev/docs/features/acp-provider.",
+            "properties": {
+              "command": {
+                "type": "string",
+                "description": "The agent program (looked up on PATH), for example claude-agent-acp, codex-acp, opencode or coddy. Required for type acp."
+              },
+              "args": {
+                "type": "array",
+                "description": "Arguments after the command, for example [acp] for opencode and coddy.",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "env": {
+                "type": "object",
+                "description": "Variables added to the environment Coddy passes the agent, for example a key the agent reads. ${CWD} in a value, in an argument, in the command or in cwd is the session's workspace, and the agent is then started once per workspace.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "cwd": {
+                "type": "string",
+                "description": "A fixed folder for the agent process and for every ACP session. Empty (the default) opens each session in the workspace of the Coddy session it serves."
+              },
+              "auth_method": {
+                "type": "string",
+                "description": "The id of the authentication method Coddy passes to the ACP authenticate call after initialize, for an agent that refuses a session until a client authenticates it (codex-acp: api-key, with OPENAI_API_KEY in env). Empty calls none: the agent uses the sign-in it has on its own."
+              },
+              "permissions": {
+                "type": "string",
+                "description": "What Coddy answers when the agent asks permission to run one of its tools: ask forwards the request to the person through the session's permission prompt (allowed without asking in a session whose permission mode is bypass, and an edit under accept_edits), allow approves it once, deny refuses it. In the plan and ask modes every request is refused.",
+                "enum": [
+                  "ask",
+                  "allow",
+                  "deny"
+                ],
+                "default": "ask"
+              },
+              "modes": {
+                "type": "object",
+                "additionalProperties": false,
+                "description": "The agent's own mode (an ACP mode id, such as plan or read-only) for each Coddy session mode. An empty modes.agent keeps the agent's default mode. modes.plan and modes.ask must name a read-only mode of the agent; without it a turn in that mode is refused.",
+                "properties": {
+                  "agent": {
+                    "type": "string",
+                    "description": "The agent's mode while the session is in agent mode."
+                  },
+                  "plan": {
+                    "type": "string",
+                    "description": "The agent's mode while the session is in plan mode."
+                  },
+                  "ask": {
+                    "type": "string",
+                    "description": "The agent's mode while the session is in ask mode."
+                  }
+                }
+              },
+              "idle_timeout_ms": {
+                "type": "integer",
+                "description": "Stop the agent process this long after its last call; the next call starts it again and replays the conversation into a new session. 0 (the default) means sixty minutes.",
+                "default": 0,
+                "minimum": 0
+              },
+              "process": {
+                "type": "string",
+                "description": "shared (the default): one agent process serves every session of this row, each in an ACP session of its own. per_session: every Coddy session gets an agent process of its own, for an agent that runs one prompt at a time per process (zcode-acp-server).",
+                "enum": [
+                  "shared",
+                  "per_session"
+                ],
+                "default": "shared"
+              }
+            },
+            "required": [
+              "command"
+            ]
+          }
+        }
+      }
+    },
+    "models": {
+      "type": "array",
+      "title": "Logical models",
+      "description": "Named model entries the agent and UI can select.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "model"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "description": "\"provider_name/api_model_id\": the first path segment must match a providers[].name; the remainder is sent to the LLM API (may itself contain slashes).",
+            "pattern": "^[^/]+/.+$"
+          },
+          "max_tokens": {
+            "type": "integer",
+            "description": "Upper bound on completion tokens per assistant message. A codex model never sends it (the Codex backend rejects max_output_tokens), so there it bounds nothing, and coddy -t and --dry-run warn about such a value."
+          },
+          "temperature": {
+            "type": "number",
+            "description": "Sampling temperature (0 = deterministic; higher = more random)."
+          },
+          "max_context_tokens": {
+            "type": "integer",
+            "description": "Context window of the model in tokens: what the web UI context ring, the console context percentage and the automatic compaction trigger measure against. 0 reads it from the provider's model listing when the provider reports one (the NeuralDeep hub, Anthropic, the Codex and Devin catalogs, vLLM, OpenRouter, LM Studio), else 128000.",
+            "default": 0
+          },
+          "multimodal": {
+            "type": "boolean",
+            "description": "Model accepts image/file inputs in addition to text; the UI shows a file attachment button for this model, and read shows it the picture in a PNG, JPEG, GIF or WebP file instead of refusing it as binary.",
+            "default": false
+          },
+          "reasoning_levels": {
+            "type": [
+              "array",
+              "null"
+            ],
+            "description": "Override the reasoning levels offered for this model. Omit to auto-detect from the model id (gpt-5* -> minimal,low,medium,high; OpenAI o-series, gpt-oss*, qwen3*, and Claude extended-thinking models -> low,medium,high), the vendor an aggregator puts in front of it left out (qwen/qwen3.8-flash reads as qwen3.8-flash). An explicit empty list hides the selector. Settings fills this field from GET /coddy/config/reasoning-levels behind its Fetch reasoning levels button.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reasoning_default": {
+            "type": "string",
+            "description": "Reasoning level pre-selected for new chats; must be one of the resolved levels, otherwise ignored."
+          },
+          "allow_reasoning_off": {
+            "type": "boolean",
+            "description": "Expose Off in the reasoning selector for this model. Enable it only when this provider/model deployment honours Coddy's provider-specific request that disables reasoning; Coddy cannot verify that capability automatically.",
+            "default": false
+          },
+          "stream": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "Transport used to talk to this model. Omit (or true) to stream over SSE. false issues one blocking completion request and delivers the whole answer at once, for servers or proxies that handle event streams badly. Rejected for providers of type codex, whose backend is streaming-only.",
+            "default": true
+          },
+          "toolset": {
+            "type": "string",
+            "description": "Name of the toolsets[] preset a session on this model is offered its tools by, unless the session picks another with /toolset <name>. Absent or empty offers every tool the mode would. Use it to spare a small-context local model the schemas of tools it never calls."
+          }
+        }
+      }
+    },
+    "toolsets": {
+      "type": "array",
+      "description": "Named presets of tool lists. A models[] row names one with toolset, and a session can pick one with /toolset <name>, on its own or after /model on the same line. A preset only narrows: a tool the mode, a subagent definition or a switch already hides stays hidden, and a call to a tool outside the set is refused without a permission prompt. It is a context optimization, not a security boundary.",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["name"],
+        "properties": {
+          "name": {
+            "type": "string",
+            "description": "Name of the preset: letters, digits, '.', '_' and '-'. default is reserved: a session picks it to be offered every tool the mode offers."
+          },
+          "tools": {
+            "type": "array",
+            "description": "Allowlist: tool names, a bare *, or a prefix* (context7__* admits every tool of that MCP server). Absent or empty admits every tool the mode would. coddy -t warns about an entry that matches no tool.",
+            "items": {
+              "type": "string"
+            }
+          },
+          "disallowed_tools": {
+            "type": "array",
+            "description": "Denylist applied after tools, with the same names and patterns; a name in both lists is removed. coddy -t warns about an entry that matches no tool.",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      }
+    },
+    "agent": {
+      "type": "object",
+      "title": "ReAct agent loop",
+      "description": "Defaults for the main agent loop (model id and safety caps).",
+      "additionalProperties": false,
+      "properties": {
+        "queue_mode": {
+          "type": "string",
+          "description": "Preferred queue mode for Enter during a running turn: steer joins the next ReAct step, after_turn starts a new turn after the current answer. When absent, interactive surfaces ask on first use.",
+          "enum": ["steer", "after_turn"]
+        },
+        "model": {
+          "type": "string",
+          "description": "Optional default models[].model id. Interactive surfaces (web UI, console) pick a model per session; unattended calls that name no model (coddy -p, coddy acp, API requests without a model selector) need it set - they report 'no model configured' when it is empty."
+        },
+        "max_turns": {
+          "type": "integer",
+          "description": "Cap on the ReAct steps (LLM calls) of one prompt turn. Defaults to 165; set 0 to disable the cap. A turn that reaches the cap ends with a notice that names it.",
+          "default": 165,
+          "minimum": 0
+        },
+        "llm_retry_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Extra attempts shared by transport retries, empty-answer recovery, first-token re-issues and output-limit recovery (a step cut off at max_tokens) until tool progress or a new follow-up. 0 disables these retries. Loop guards, Stop hooks, fallback models and quota-reset waits have separate limits.",
+          "default": 3,
+          "minimum": 0
+        },
+        "llm_retry_base_ms": {
+          "type": "integer",
+          "description": "Initial backoff between LLM retries, in milliseconds. A server-provided pause (Retry-After-Ms / Retry-After headers, \"Limit resets at\" / \"retry in Ns\" body phrases) overrides the exponential backoff, capped at 60s.",
+          "default": 1000,
+          "minimum": 0
+        },
+        "llm_min_interval_ms": {
+          "type": "integer",
+          "description": "Minimum gap between consecutive LLM calls in milliseconds, retry attempts included (0 disables pacing; e.g. 12000 on strict free tiers).",
+          "default": 0,
+          "minimum": 0
+        },
+        "llm_first_token_timeout_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How long a streamed LLM call may stay silent before the turn cancels it (the API hang guard). An explicit 0 disables the guard; blocking (stream: false) transports are never guarded.",
+          "default": 90000,
+          "minimum": 0
+        },
+        "llm_stream_idle_timeout_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How long a streamed LLM response may send nothing after its first bytes before the stream is cut as stalled (the mid-answer hang guard): the text already delivered is kept and the turn ends with the stall named. An explicit 0 disables the guard; the wait for the first byte belongs to llm_first_token_timeout_ms, and blocking (stream: false) transports are never guarded.",
+          "default": 300000,
+          "minimum": 0
+        },
+        "loop_guard": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Runaway-loop protection: cut a streamed response that degenerates into repeating itself, and block a tool called over and over with identical arguments.",
+          "default": true
+        },
+        "loop_tool_repeat_limit": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Consecutive identical tool calls in successive ReAct responses (same name, same canonical arguments) before the loop guard steps in. 0 disables the tool-repeat check.",
+          "default": 2,
+          "minimum": 0
+        },
+        "loop_stream_repeat_cycles": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Identical back-to-back output cycles inside one streamed response before the stream is cut. 0 disables the stream check.",
+          "default": 5,
+          "minimum": 0
+        },
+        "loop_nudge_max": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How many times one turn may be nudged back on track before the loop guard stops it with a notice.",
+          "default": 1,
+          "minimum": 0
+        },
+        "wait_for_limit_reset": {
+          "type": "boolean",
+          "description": "Wait for a hit usage limit to lift and re-issue the call, instead of ending the turn with the provider's error. Applies to a top-level turn whose provider names a pause beyond the retry budget (a 429 with Retry-After or \"Limit resets at\"); the turn lock and the client stream stay open while it waits, so it is off by default.",
+          "default": false
+        },
+        "wait_for_limit_reset_max_ms": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Longest time one turn spends waiting for limits in total, in milliseconds, the retry wrapper's own sleeps on a limit included; a pause that would exceed it ends the turn at once with the error. An explicit 0 never waits.",
+          "default": 14400000,
+          "minimum": 0
+        }
+      }
+    },
+    "supervisor": {
+      "type": "object",
+      "title": "Session supervisor",
+      "description": "Checks a session goal (/goal) after every turn with a second model, continues unfinished work within bounds, and watches for stalled or looping turns; see https://coddy.dev/docs/features/session-supervisor.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {"type": "boolean", "description": "Check ordinary turns against the latest request even without a /goal. A session goal is checked whatever this switch says.", "default": false},
+        "model": {"type": "string", "description": "Configured models[].model that checks the work. Empty uses the session's own model, which then grades its own work; a model of another family is the better judge.", "default": ""},
+        "verify": {"type": ["boolean", "null"], "description": "Confirm a met verdict before the goal is closed: the goal-verifier subagent reads the workspace with read-only tools and checks every requirement. Unset means true.", "default": true},
+        "stall_seconds": {"type": ["integer", "null"], "description": "Seconds a goal turn may go without any update before the watchdog cuts it and starts a recovery turn. Permission prompts, running tools and running background tasks pause the timer. 0 disables it.", "default": 300, "minimum": 0},
+        "max_nudges": {"type": ["integer", "null"], "description": "Recovery turns after a stall, a tool loop or a failed turn, per run of the supervisor.", "default": 2, "minimum": 0},
+        "max_continuations": {"type": ["integer", "null"], "description": "Automatic continuation turns one goal may use; when they run out the goal gets one wrap-up turn and stops as limited.", "default": 10, "minimum": 0},
+        "loop_repeat": {"type": ["integer", "null"], "description": "How many times a repeating cycle of identical tool operations (same call, same result) may come round before the watchdog cuts the turn. 0 disables loop detection.", "default": 3, "minimum": 0},
+        "token_budget": {"type": ["integer", "null"], "description": "Uncached input plus output tokens one goal's turns may spend; 0 means no cap.", "default": 0, "minimum": 0},
+        "max_chain_sessions": {"type": ["integer", "null"], "description": "Sessions one goal chain (/goal --then-file) may open one after another; when the goal of the last one is met, the chain stops. 0 turns goal chains off.", "default": 10, "minimum": 0}
+      }
+    },
+    "prompts": {
+      "type": "object",
+      "title": "System prompt templates",
+      "description": "Override the built-in system prompt templates (Go text/template).",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Directory containing prompt template files. Empty uses embedded defaults. Supports ~ and ${CWD} (session cwd at render time).",
+          "default": ""
+        },
+        "agent_prompt": {
+          "type": "string",
+          "description": "File name inside prompts.dir for agent mode.",
+          "default": "agent.md"
+        },
+        "plan_prompt": {
+          "type": "string",
+          "description": "File name inside prompts.dir for plan mode.",
+          "default": "plan.md"
+        },
+        "ask_prompt": {
+          "type": "string",
+          "description": "File name inside prompts.dir for ask mode.",
+          "default": "ask.md"
+        }
+      }
+    },
+    "instructions": {
+      "type": "object",
+      "title": "Project instructions",
+      "description": "Files the operator adds to the system prompt (AGENTS.md convention), after the documents every session reads anyway: the AGENTS.md and DESIGN.md of the agent home, then those of the session folder, and the nested ones of a folder a tool enters, none of which is named here or can be turned off. A file already in the prompt is not read twice. See https://coddy.dev/docs/features/rules.",
+      "additionalProperties": false,
+      "properties": {
+        "files": {
+          "type": "array",
+          "description": "Extra instruction files, appended after the AGENTS.md and DESIGN.md documents in the order listed; empty by default. ${CODDY_HOME}, ${CWD} and a leading ~ expand; an absolute entry is read as it stands, a relative one resolves against the session CWD. An entry naming a document the prompt already carries is skipped.",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "skills": {
+      "type": "object",
+      "title": "Skills",
+      "description": "Directories scanned for skills (SKILL.md and root .md/.mdc files).",
+      "additionalProperties": false,
+      "properties": {
+        "dirs": {
+          "type": "array",
+          "description": "Extra skill directories, read after the four default folders and stronger than them. The defaults are always read, lowest priority first: ${HOME}/.agents/skills (shared with every agent, npx skills and npx skillsbd install there), the project's .agents/skills, ${CODDY_HOME}/skills (Coddy's own and installed skills), the project's .coddy/skills; then these entries in their order. A skill found in several directories is taken from the last one in this order, and a directory named twice is read at its last place. ${CODDY_HOME} expands when the file is loaded, ${HOME} and ~ to your home folder, ${CWD} and a relative path against the session's workspace (the folder a new chat picked included).",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "project_trust": {
+          "type": "string",
+          "title": "Project marketplaces",
+          "description": "Trust policy for the project's .coddy/marketplaces.json, which travels with the checkout: \"ask\" (default) leaves its sources and marketplaces out of every sync until the operator approves that exact entry for that workspace; \"allow\" treats them like the operator's own ${CODDY_HOME}/marketplaces.json; \"deny\" never uses them (they are listed as switched off). What they install goes to ${CODDY_HOME}/skills. The project's skill folders (.coddy/skills, .agents/skills) are not affected. Skill marketplaces are not declared in config.yaml: they live in ${CODDY_HOME}/marketplaces.json and the project's .coddy/marketplaces.json, and an old skills.sources list is moved into the home file on load. See https://coddy.dev/docs/features/skills#project-marketplaces-and-trust.",
+          "enum": [
+            "ask",
+            "allow",
+            "deny"
+          ],
+          "default": "ask"
+        },
+        "auto_discovery": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "title": "Skill auto-discovery",
+          "description": "Offer the model-driven load_skill tool so the agent pulls a catalogued skill's full instructions into a turn on its own when the request matches, instead of requiring an explicit /name. Defaults to true.",
+          "default": true
+        }
+      }
+    },
+    "rules": {
+      "type": "object",
+      "title": "Project rules",
+      "description": "Discovery of rule files from ${CODDY_HOME}/rules (the operator's own, applied in every workspace) and from one project folder under the session CWD, the first of .coddy/rules, .agents/rules, .cursor/rules, .claude/rules, .codex/rules that holds a rule file, and the same way under every subfolder on the way down to a file a tool or a mention reaches, each of those rules applying to its own subfolder; .mdc files are Cursor rules, .md files Claude Code rules. The AGENTS.md and DESIGN.md documents are not rules in this sense and none of these settings turns them off. See https://coddy.dev/docs/features/rules.",
+      "additionalProperties": false,
+      "properties": {
+        "auto_discover": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Scan the rule folders automatically: ${CODDY_HOME}/rules, the project folder of the session CWD and those of the subfolders a tool or a mention reaches. The AGENTS.md and DESIGN.md documents are read either way.",
+          "default": true
+        },
+        "systems": {
+          "type": "array",
+          "description": "Restrict which rule systems are loaded: user (${CODDY_HOME}/rules), coddy, agents-dir (.agents/rules), cursor, claude, codex. Empty means all. A project folder left out drops out of the chain; of the ones admitted, the first that holds a rule file is read. agents, which used to switch the nested AGENTS.md files, no longer affects them (they are always read); it is still accepted, and a list holding only agents loads no rule folder.",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      }
+    },
+    "mcp": {
+      "type": "object",
+      "title": "MCP discovery",
+      "description": "MCP settings that are not tied to a single server entry.",
+      "additionalProperties": false,
+      "properties": {
+        "project_trust": {
+          "type": "string",
+          "description": "Trust policy for the project-local <cwd>/.coddy/mcp.json, which travels with the checkout: \"ask\" keeps its servers cold until the operator approves that exact declaration for that workspace; \"allow\" starts them automatically (trusted workspaces only); \"deny\" never loads them.",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "allow",
+            "deny"
+          ]
+        },
+        "idle_timeout_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Seconds an MCP server that no session holds any more keeps running before Coddy stops it: a project server once the last session of its workspace let it go, a server an ACP client sent once the last session that sent it closed. A session that takes the server in the meantime finds it running. The global servers that coddy serve, the console and coddy acp start with the process are not affected, and a server switched off, no longer approved, removed or declared differently stops at once. 0 stops a server as soon as the last session lets it go.",
+          "default": 300,
+          "minimum": 0
+        }
+      }
+    },
+    "tools": {
+      "type": "object",
+      "title": "Tools and permissions",
+      "description": "Filesystem and shell policy for built-in tools.",
+      "additionalProperties": false,
+      "properties": {
+        "command_allowlist": {
+          "type": "array",
+          "description": "Commands that never require permission. Exact or prefix match (prefix + space + any args). \"*\" allows all commands.",
+          "items": {
+            "type": "string"
+          }
+        },
+        "ssh_connect_timeout": {
+          "type": "integer",
+          "description": "TCP dial timeout for SSH connections (ssh_run_command tool), in seconds.",
+          "default": 30
+        },
+        "output_limits": {
+          "type": "object",
+          "title": "Tool output limits",
+          "description": "Maximum lines each tool result or error may return into the LLM context. Every enabled limit also applies a 64 KiB per-call byte safety ceiling so a huge single line cannot bypass it. 0 disables both limits for that tool. Unset fields fall back to the built-in defaults.",
+          "additionalProperties": false,
+          "properties": {
+            "read": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max lines for a read file page or directory listing.",
+              "default": 1000,
+              "minimum": 0
+            },
+            "grep": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max path:line:content records returned by grep.",
+              "default": 200,
+              "minimum": 0
+            },
+            "glob": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max paths returned by glob.",
+              "default": 300,
+              "minimum": 0
+            },
+            "print_tree": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max lines of a directory tree.",
+              "default": 400,
+              "minimum": 0
+            },
+            "run_command": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max combined stdout+stderr lines of a shell command.",
+              "default": 500,
+              "minimum": 0
+            },
+            "ssh_run_command": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max combined stdout+stderr lines of a remote SSH command.",
+              "default": 500,
+              "minimum": 0
+            },
+            "webfetch": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max lines of fetched page markdown.",
+              "default": 800,
+              "minimum": 0
+            },
+            "websearch": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Max lines of search results.",
+              "default": 200,
+              "minimum": 0
+            },
+            "default": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Applies to any tool not named above, including MCP tools. 0 means unlimited.",
+              "default": 1000,
+              "minimum": 0
+            }
+          }
+        },
+        "background": {
+          "type": "object",
+          "title": "Background tasks",
+          "description": "Commands the agent runs detached in the session task pool instead of blocking a turn. The pool dies with the coddy process; each task's metadata and captured output stay in the session bundle, and a task interrupted by a restart is reported as orphaned.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Offer the background option on run_command and expose the background task tools.",
+              "default": true
+            },
+            "max_concurrent": {
+              "type": "integer",
+              "description": "How many background tasks one session may run at once. 0 uses the default.",
+              "default": 5
+            },
+            "default_timeout_seconds": {
+              "type": "integer",
+              "description": "Hard limit for a task started without an explicit timeout and without a duration estimate. 0 uses the default.",
+              "default": 900
+            },
+            "max_timeout_seconds": {
+              "type": "integer",
+              "description": "Ceiling applied to any requested or estimate-derived timeout. 0 uses the default.",
+              "default": 3600
+            },
+            "output_buffer_bytes": {
+              "type": "integer",
+              "description": "How much of each task's output stays in memory for the status ticker. The full log is still written to the session bundle. 0 uses the default.",
+              "default": 262144
+            }
+          }
+        },
+        "preview_server": {
+          "type": "object",
+          "title": "Preview server",
+          "description": "The preview_server tool: a static file server the agent starts over a project directory, on a free port, so the operator can open HTML, JS and CSS work in a browser. The server is a background task of the session and runs until it is stopped, the session is deleted or coddy exits.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Offer the preview_server tool. The server is a background task, so tools.background.enable: false turns it off as well.",
+              "default": true
+            },
+            "host": {
+              "type": "string",
+              "description": "Address the server binds, without a port: the port is always a free one. Anything that is not loopback exposes the served directory to whoever can reach that address.",
+              "default": "127.0.0.1"
+            },
+            "public_host": {
+              "type": "string",
+              "description": "Host written into the URL the agent hands out, for a coddy that runs where the operator's browser is not (a container, a remote machine). Empty uses the bind host.",
+              "default": ""
+            }
+          }
+        },
+        "canvas": {
+          "type": "object",
+          "title": "Canvas",
+          "description": "The canvas of the web UI: a .canvas file of the workspace shown in the Files window as a board of live frames, each a page of the workspace running in a sandbox, put there by the agent with canvas_show or by the person from the Files window; canvas_inspect reads what the browser saw. See https://coddy.dev/docs/features/canvas.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Offer the canvas_show and canvas_inspect tools, serve frames and show the canvas in the web UI.",
+              "default": true
+            },
+            "allow_cdn": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Let a frame load libraries, styles and fonts from the common CDNs: cdn.jsdelivr.net, unpkg.com, cdnjs.cloudflare.com, cdn.tailwindcss.com, fonts.googleapis.com and fonts.gstatic.com.",
+              "default": true
+            },
+            "allowed_sources": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^https?://(\\*\\.)?[A-Za-z0-9-]+(\\.[A-Za-z0-9-]+)*(:[0-9]{1,5})?(/[A-Za-z0-9._~/-]*)?$"
+              },
+              "description": "Further hosts a frame may load from and connect to, as https://host or https://*.host with an optional port and path. A page on the canvas can send what it reads under its folder to any of them."
+            }
+          }
+        },
+        "websearch": {
+          "type": "object",
+          "title": "Web search",
+          "description": "Which search engines the websearch tool asks, in what order their results merge, and what it may spend asking them. Each engine reports its own outcome next to the results, so a blocked backend is named rather than counted as \"the web has nothing\".",
+          "additionalProperties": false,
+          "properties": {
+            "engines": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "brave",
+                  "bing",
+                  "ddg",
+                  "google",
+                  "searxng"
+                ]
+              },
+              "description": "Search engines to ask, in merge order. Unset asks brave then bing. \"ddg\" and \"google\" are not asked by default: measured from a server, DuckDuckGo answers every query with an anti-bot interstitial and Google renders its results in the browser. \"searxng\" needs searxng_url.",
+              "default": [
+                "brave",
+                "bing"
+              ]
+            },
+            "engine_timeout_seconds": {
+              "type": "integer",
+              "description": "Seconds one engine may take before it is reported as unavailable. 0 uses the default.",
+              "default": 8
+            },
+            "total_timeout_seconds": {
+              "type": "integer",
+              "description": "Seconds the whole search may take, however many engines it asks. 0 uses the default.",
+              "default": 20
+            },
+            "max_concurrent_engines": {
+              "type": "integer",
+              "description": "How many engines are asked at once. 0 uses the default.",
+              "default": 4
+            },
+            "snippet_chars": {
+              "type": "integer",
+              "description": "Maximum characters of one result description. 0 uses the default.",
+              "default": 320
+            },
+            "cache_ttl_seconds": {
+              "type": "integer",
+              "description": "Seconds one engine answer is reused before the engine is asked again, so a repeated search does not repeat the request. 0 uses the default; a negative value turns caching off.",
+              "default": 300
+            },
+            "searxng_url": {
+              "type": "string",
+              "description": "Base address of your own SearXNG instance, asked over its JSON API (enable the json format in its settings.yml). A self-hosted aggregator is the durable answer to a scraped engine being turned away; localhost and LAN addresses are allowed on purpose.",
+              "default": ""
+            },
+            "brave_api_key": {
+              "type": "string",
+              "description": "Brave Search API subscription token. With it the brave engine uses the official JSON API instead of reading the public result page, which has no parser to break when Brave redeploys. Empty reads the BRAVE_API_KEY environment variable (also from ${CODDY_HOME}/.env), so the key need not be stored here.",
+              "default": ""
+            }
+          }
+        },
+        "http_request": {
+          "type": "object",
+          "title": "HTTP requests",
+          "description": "Policy of the http_request tool, the agent's curl: the destinations it reaches without asking and the headers every request sends. Under the ask and accept_edits permission modes a request asks the operator unless its destination is allowed here or was approved in the session; bypass never asks. See https://coddy.dev/docs/features/http-requests.",
+          "additionalProperties": false,
+          "properties": {
+            "allowlist": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              },
+              "description": "Destinations a request reaches without asking: a host (api.github.com), a subdomain wildcard (*.example.com), either with an optional :port, an origin (http://localhost:8080) or an address prefix (https://api.example.com/v1/). \"*\" allows every destination. An entry also covers the files a request uploads and an unchecked certificate; a proxy needs an entry of its own, and a file the response is saved to follows the write policy.",
+              "default": []
+            },
+            "default_headers": {
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "description": "Headers every http_request call sends unless the call names the header itself: a browser User-Agent for a site that turns tools away, an Accept an internal service expects. They take the place of the tool's own defaults (its coddy-agent User-Agent), a call's headers take the place of them - an empty value in the call removes one - and an empty value here leaves the header out of every call that does not set it. A name is letters, digits, - and _, starting with a letter. Host, Content-Type, Content-Length and Transfer-Encoding describe a single request and are refused, and so are the hop-by-hop headers (Connection, Keep-Alive, Proxy-Connection, TE, Trailer, Upgrade) and Proxy-Authorization, which an https request would carry through the proxy's tunnel to every origin. The headers go to every destination the tool reaches, so a credential here reaches all of them; the permission prompt names them and shows the value only of one that describes the client (User-Agent, Accept...), config_get keeps their values from the model, and webfetch, URL mentions and the model providers never send them. See https://coddy.dev/docs/features/http-requests#default-headers.",
+              "default": {}
+            }
+          }
+        }
+      }
+    },
+    "subagents": {
+      "type": "object",
+      "title": "Subagents",
+      "description": "User-defined child agents the model can delegate to with spawn_agent. Definitions are markdown files with YAML frontmatter; each run is a background task of the parent session with its own child session and transcript. See https://coddy.dev/docs/features/subagents.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Register the spawn_agent tool and list the subagent catalog in the system prompt.",
+          "default": true
+        },
+        "dirs": {
+          "type": "array",
+          "description": "Extra definition directories, read after the four default folders and stronger than them. The defaults are always read, lowest priority first: ${HOME}/.agents/agents, the project's .agents/agents, ${CODDY_HOME}/agents, the project's .coddy/agents; then these entries in their order. A definition found in several directories is taken from the last one in this order, and a directory named twice is read at its last place. ${CODDY_HOME} expands when the file is loaded, ${HOME} and ~ to your home folder, ${CWD} and a relative path against the session's workspace. Directories inside the workspace are project scope and follow the trust policy.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "project_trust": {
+          "type": "string",
+          "description": "Trust policy for definitions found inside the workspace, which travel with the checkout: \"ask\" loads them but refuses to spawn one until the operator approved that exact file for that workspace (the shield in Settings -> Subagents, coddy agents trust on the machine running coddy, or POST /coddy/subagents/{name}/trust with the session workspace as cwd); \"allow\" treats them like the operator's own files; \"deny\" never reads them.",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "allow",
+            "deny"
+          ]
+        },
+        "max_concurrent": {
+          "type": "integer",
+          "description": "How many subagent runs the whole process may have in flight at once, whatever session started them. Starting past the limit is refused, not queued. 0 uses the default.",
+          "default": 4
+        },
+        "max_depth": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How deep spawning may nest: 1 lets a session spawn subagents that cannot spawn further; 0 forbids spawning everywhere. Omit for the default.",
+          "default": 1
+        },
+        "default_timeout_seconds": {
+          "type": "integer",
+          "description": "Hard limit for one run whose definition and call give no timeout. Capped by tools.background.max_timeout_seconds. 0 uses the default.",
+          "default": 1800
+        },
+        "max_turns": {
+          "type": "integer",
+          "description": "ReAct rounds a child may take. 0 follows agent.max_turns.",
+          "default": 0
+        }
+      }
+    },
+    "hooks": {
+      "type": "object",
+      "title": "Hooks",
+      "description": "Operator commands run at lifecycle points of a session: before and after a tool call, when a prompt is submitted, when the agent stops, on session start and around compaction. Definitions are JSON files in the Claude Code shape (~/.coddy/hooks.json, .coddy/hooks.json, .claude/settings*.json). See https://coddy.dev/docs/features/hooks.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Load and run hooks at all.",
+          "default": true
+        },
+        "files": {
+          "type": "array",
+          "description": "Definition files, lowest priority first; every matching hook runs. ${CODDY_HOME} and ${CWD} expand; a relative entry resolves against the session cwd. Files inside the workspace are project scope and follow project_trust; only the hooks key of a Claude Code settings file is read.",
+          "items": {
+            "type": "string"
+          },
+          "default": [
+            "${CODDY_HOME}/hooks.json",
+            "${CWD}/.claude/settings.json",
+            "${CWD}/.claude/settings.local.json",
+            "${CWD}/.coddy/hooks.json"
+          ]
+        },
+        "project_trust": {
+          "type": "string",
+          "description": "Trust policy for hook files found inside the workspace, which travel with the checkout: \"ask\" lists them but runs nothing until the operator approved that exact file for that workspace on the machine running coddy (coddy hooks trust there, or POST /coddy/hooks/trust with the session workspace as cwd); \"allow\" treats them like the operator's own file; \"deny\" never reads them.",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "allow",
+            "deny"
+          ]
+        },
+        "default_timeout_seconds": {
+          "type": "integer",
+          "description": "Hard limit for one hook process whose definition gives no timeout. 0 uses the default.",
+          "default": 60
+        },
+        "stop_loop_limit": {
+          "type": "integer",
+          "description": "How many times per turn a Stop hook may send the agent back to work. 0 uses the default.",
+          "default": 5
+        },
+        "max_output_chars": {
+          "type": "integer",
+          "description": "Cap on the context, messages and reasons one hook may hand to the model or the user; longer values are truncated with a marker. 0 uses the default.",
+          "default": 10000
+        }
+      }
+    },
+    "logger": {
+      "type": "object",
+      "title": "Logging",
+      "description": "Process log level, outputs, format, and file rotation.",
+      "additionalProperties": false,
+      "properties": {
+        "level": {
+          "type": "string",
+          "description": "Minimum severity written to the configured outputs (\"warning\" is accepted as an alias of \"warn\").",
+          "default": "info",
+          "enum": [
+            "debug",
+            "info",
+            "warn",
+            "warning",
+            "error"
+          ]
+        },
+        "levels": {
+          "type": "array",
+          "description": "Per-component minimum severity. A component is the dotted name a record carries in its \"component\" attribute (gateway, gateway.telegram, gateway.pachca, session, agent, scheduler, provider.acp); a parent name covers everything nested under it and the longest configured prefix wins. Records with no component follow \"level\".",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "component",
+              "level"
+            ],
+            "properties": {
+              "component": {
+                "type": "string",
+                "description": "Dotted component name, for example \"gateway.telegram\".",
+                "pattern": "^[a-z0-9_\\-]+(\\.[a-z0-9_\\-]+)*$"
+              },
+              "level": {
+                "type": "string",
+                "description": "Minimum severity for this component.",
+                "enum": [
+                  "debug",
+                  "info",
+                  "warn",
+                  "warning",
+                  "error"
+                ]
+              }
+            }
+          }
+        },
+        "outputs": {
+          "type": "array",
+          "description": "Where log records go; any combination of stdout, stderr, file. Empty means stderr only.",
+          "default": [
+            "stderr"
+          ],
+          "items": {
+            "type": "string",
+            "enum": [
+              "stdout",
+              "stderr",
+              "file"
+            ]
+          }
+        },
+        "file": {
+          "type": "string",
+          "description": "Path for the file sink; required when outputs includes \"file\". Supports ${CODDY_HOME}."
+        },
+        "format": {
+          "type": "string",
+          "description": "Log record format.",
+          "default": "text",
+          "enum": [
+            "text",
+            "json"
+          ]
+        },
+        "rotation": {
+          "type": "object",
+          "description": "Size-based rotation for the file sink.",
+          "additionalProperties": false,
+          "properties": {
+            "max_size_mb": {
+              "type": "integer",
+              "description": "Rotate after the file reaches this size in MB; 0 disables size-based rotation.",
+              "default": 0,
+              "minimum": 0
+            },
+            "max_files": {
+              "type": "integer",
+              "description": "Rotated backups to keep when max_size_mb > 0.",
+              "default": 0,
+              "minimum": 0
+            }
+          }
+        }
+      }
+    },
+    "sessions": {
+      "type": "object",
+      "title": "Session storage",
+      "description": "Where persisted session bundles are stored.",
+      "additionalProperties": false,
+      "properties": {
+        "dir": {
+          "type": "string",
+          "description": "Sessions root directory. Empty resolves to ${CODDY_HOME}/sessions. Supports ${CODDY_HOME} and ~.",
+          "default": ""
+        }
+      }
+    },
+    "compaction": {
+      "type": "object",
+      "title": "Context compaction",
+      "description": "Summarizes older conversation history so long sessions keep fitting the model context window. Manual compact command plus automatic trigger at a percent of the model's context window.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Master switch for compaction (manual command and automatic trigger). Defaults to true.",
+          "default": true
+        },
+        "auto_enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Compact automatically: at threshold_percent, older turns are folded into a summary, or, when the window holds no earlier turn, the earlier steps of the turn being answered (the summary row then starts with the prompt itself, verbatim, and at most the four latest steps stay); and a request the provider refuses as larger than its context window is compacted once and asked again. Set false to keep manual /compact and the Context popover action available without any of this. Defaults to true.",
+          "default": true
+        },
+        "threshold_percent": {
+          "type": "integer",
+          "description": "Auto-compaction fires when the estimated context usage reaches this percent of the effective model's context window (1..100): its max_context_tokens, else the window its provider's model listing reports, else 128000 - the window the web UI context ring shows.",
+          "default": 80,
+          "minimum": 1,
+          "maximum": 100
+        },
+        "keep_recent_turns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How many most recent user turns (each with the agent replies and tool activity after it) stay verbatim; only history before that boundary is summarized. 0 summarizes the whole window. When the window holds no more user turns than this, a compaction keeps fewer: the automatic trigger down to the prompt being answered, the manual command down to none.",
+          "default": 2,
+          "minimum": 0
+        },
+        "model": {
+          "type": "string",
+          "description": "Optional models[].model used for the summarization call. Empty uses the session's effective model.",
+          "default": ""
+        },
+        "fallback_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Summarizer models tried in order when the one before them fails (models[].model ids). The session's own model is the last resort whether or not it is listed, so a compaction is not blocked by one unreachable summarizer."
+        },
+        "result_eviction": {
+          "type": "object",
+          "title": "Tool result eviction",
+          "description": "Collapses superseded tool results to short placeholders when building the LLM request (the persisted transcript is never rewritten), so paging a large file, a wide search or a fan-out of directory listings cannot pin dead lines in every later turn. Read and grep results survive while the model marks them (keep_result, or keep:true) or they are among the most recent; the listings of glob, print_tree, websearch and webfetch survive within the latest three steps that hold one (a step is one assistant message with every result of its tool calls). A write invalidates earlier reads, greps and file listings that covered what it changed.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Master switch for tool result eviction (read, grep and the listing tools). Defaults to true.",
+              "default": true
+            },
+            "keep_recent": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "How many most recent evictable read and grep results (read pages, grep dumps) stay intact as a working window. 0 keeps none. Listing results do not count toward it. The default of 2 keeps a read and a grep live at the same time; with 1, a model comparing two results keeps re-fetching whichever the other evicted.",
+              "default": 2,
+              "minimum": 0
+            },
+            "min_result_bytes": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Results at or below this size are never evicted (too small to be worth a placeholder). 0 makes every result a candidate.",
+              "default": 2000,
+              "minimum": 0
+            },
+            "start_percent": {
+              "type": [
+                "integer",
+                "null"
+              ],
+              "description": "Evict only once the estimated context reaches this percent of the model's context window. Below it the replayed history is sent untouched, so the provider's prompt cache keeps it; a placeholder appearing mid-history invalidates every cached token behind it. 0 evicts from the first result. Read and grep results of a model without max_context_tokens are evicted from the first result; listing results measure against the window its provider reports, or the default 128000.",
+              "default": 50,
+              "minimum": 0,
+              "maximum": 100
+            }
+          }
+        }
+      }
+    },
+    "memory": {
+      "type": "object",
+      "title": "Long-term memory subagent",
+      "description": "Optional memory subagent (implementation in external/memory; enable at runtime with memory.enable).",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "description": "Run the memory subagent on every user turn (needs the memory build tag).",
+          "default": false
+        },
+        "model": {
+          "type": "string",
+          "description": "Exact models[].model id the memory subagent runs on; empty uses the session's model.",
+          "default": ""
+        },
+        "fallback_models": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Memory subagent models tried in order when the one before them fails before answering (models[].model ids). The session's own model is the last resort whether or not it is listed, so one unreachable deployment does not take the memory run down with it."
+        },
+        "dir": {
+          "type": "string",
+          "description": "Long-term memory root. Empty resolves to ${CODDY_HOME}/memory. Supports ${CODDY_HOME} and ~.",
+          "default": ""
+        },
+        "wait_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How long a user turn waits for the memory subagent's report before its first model call. An explicit 0 never waits: the report then reaches the turn only through a later step, or stays in the Tasks panel.",
+          "default": 20
+        },
+        "timeout_seconds": {
+          "type": "integer",
+          "description": "Hard limit of one memory run in seconds, capped by tools.background.max_timeout_seconds like every task of the pool.",
+          "default": 300
+        },
+        "keep_runs": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Finished memory runs kept per session, task record and child transcript alike; the oldest beyond this number are removed when a run finishes. An explicit 0 keeps every run.",
+          "default": 20
+        },
+        "recall_max_turns": {
+          "type": "integer",
+          "description": "Bounds the memory subagent's ReAct rounds together with persist_max_turns; the child's cap is the larger of the two.",
+          "default": 6
+        },
+        "persist_max_turns": {
+          "type": "integer",
+          "description": "Bounds the memory subagent's ReAct rounds together with recall_max_turns; the child's cap is the larger of the two.",
+          "default": 12
+        },
+        "copilot_max_tokens": {
+          "type": "integer",
+          "description": "Completion token cap for the memory model's calls.",
+          "default": 4096
+        },
+        "max_search_hits": {
+          "type": "integer",
+          "description": "Maximum snippets returned by memory_search.",
+          "default": 8
+        },
+        "max_note_chars": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Longest body one note saved by coddy_memory_save may have, in characters (not bytes). An explicit 0 removes the cap.",
+          "default": 900
+        },
+        "additional_prompt": {
+          "type": "string",
+          "description": "Operator instructions for the memory subagent alone: a section of its system prompt that the main agent never sees. Empty adds nothing.",
+          "default": ""
+        },
+        "additional_prompt_max_chars": {
+          "type": "integer",
+          "description": "Cap on additional_prompt in characters; a longer text is cut there, the agent log says so and coddy -t reports it. 0 means no cap.",
+          "default": 0
+        }
+      }
+    },
+    "decisions": {
+      "type": "object",
+      "title": "Command safety decisions",
+      "description": "Ask the NeuralDeep decisions API whether a shell command is safe before the permission gate decides: a safe command runs without a prompt, an unsafe one is asked about in every mode, bypass included, and rejected where nobody can answer. See https://coddy.dev/docs/features/decisions.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "description": "Check run_command and ssh_run_command calls the operator did not allow explicitly against the decisions endpoint before the permission gate decides. A safe command runs without a prompt; an unsafe one, or one the check gave no verdict on, is asked about in every mode, bypass included, with the verdict in a prompt no mode or surface answers by itself, and where nobody can answer it is rejected, the rejection returned as the tool result so the session records it. Commands the allowlist, a session grant of exactly that command or a hook's allow approves are not checked, and neither are commands the operator approved in a prompt; a program-wide or prefix grant does not exempt a command from the check. Needs a NeuralDeep credential on the first provider row of type neuraldeep: its api_key or api_key_command, its NAME_API_KEY environment variable (NEURALDEEP_API_KEY for a row named neuraldeep or when there is no row) or its stored hub sign-in.",
+          "default": false
+        },
+        "model": {
+          "type": "string",
+          "description": "Decisions model to ask: frida-decisions (encoder pass, up to 512 tokens of command text, ~20 ms per request) or clef-flash (up to 8192 tokens, ~150 ms).",
+          "enum": [
+            "frida-decisions",
+            "clef-flash"
+          ],
+          "default": "frida-decisions"
+        },
+        "threshold": {
+          "type": "number",
+          "description": "Probability of the unsafe option at or above which a command counts as unsafe. 0 uses the default (0.5); lower is stricter, higher lets borderline commands through. A bare unsafe answer counts as 1.",
+          "minimum": 0,
+          "maximum": 1,
+          "default": 0.5
+        }
+      }
+    },
+    "httpserver": {
+      "type": "object",
+      "title": "HTTP gateway",
+      "description": "OpenAI-compatible HTTP API defaults (used only by binaries built with -tags http; the embedded SPA needs -tags http,ui). See https://coddy.dev/docs/reference/http-api.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "default": true,
+          "description": "Serve the HTTP API (and the embedded SPA) in this process. Omitted means true; set false on a node that only polls a messenger or relays a swarm."
+        },
+        "host": {
+          "type": "string",
+          "description": "Bind address for the HTTP API. Empty means 127.0.0.1; set 0.0.0.0 to accept connections from other machines.",
+          "default": "127.0.0.1"
+        },
+        "port": {
+          "type": "integer",
+          "description": "Default listen port when coddy serve does not pass -P/--port. 0 falls back to 12345.",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "auth_token": {
+          "type": "string",
+          "description": "Optional bearer credential for the HTTP API. Empty means no authentication (historical default). Use a \"${ENV}\" reference to keep the secret out of the file; never echoed back by GET /coddy/config. Prefer --auth-token / CODDY_HTTP_TOKEN to keep it out of config.yaml entirely. See https://coddy.dev/docs/operate/remote.",
+          "default": ""
+        },
+        "login": {
+          "type": "object",
+          "title": "Web UI sign-in",
+          "description": "Optional password sign-in for the browser, so a server on a network is not readable by everyone who finds the port. Off unless an account exists here or in CODDY_HTTP_USER / CODDY_HTTP_PASSWORD. API clients keep using auth_token. See https://coddy.dev/docs/operate/remote.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": [
+                "boolean",
+                "null"
+              ],
+              "description": "Turn the sign-in form on or off explicitly. Omitted follows the credentials: an account here or in the environment enables it. false keeps the form off with the variables still set.",
+              "default": null
+            },
+            "mode": {
+              "type": "string",
+              "enum": [
+                "password"
+              ],
+              "description": "How a browser authenticates. Only \"password\" is implemented; the key exists so a trusted-proxy mode can be added without moving your configuration.",
+              "default": "password"
+            },
+            "user": {
+              "type": "string",
+              "description": "Account name for the sign-in form. Supports \"${ENV}\" references, e.g. \"${CODDY_HTTP_USER}\".",
+              "default": ""
+            },
+            "password_hash": {
+              "type": "string",
+              "description": "argon2id hash of the password in PHC form (\"$argon2id$v=19$m=...$...\"), written by `coddy serve set-password`. Never echoed back by GET /coddy/config, and a save from the settings screen preserves it. Put a plaintext password in CODDY_HTTP_PASSWORD instead of here.",
+              "default": ""
+            },
+            "session_ttl_hours": {
+              "type": "integer",
+              "description": "How long a browser stays signed in. 0 means the cookie is dropped when the browser closes; the server still expires the session itself after 30 days, because a record it keeps forever is not a session.",
+              "default": 0,
+              "minimum": 0
+            }
+          }
+        },
+        "public_docs": {
+          "type": "boolean",
+          "description": "When auth is enabled, keep /docs and /openapi.* reachable without a token.",
+          "default": false
+        },
+        "allow_insecure": {
+          "type": "boolean",
+          "description": "Silence the two startup warnings about a server without authentication - a non-loopback bind, and CORS that admits pages nobody listed (allow_loopback or \"*\") - and the --dry-run findings that mirror them.",
+          "default": false
+        },
+        "cors": {
+          "type": "object",
+          "title": "CORS",
+          "description": "Cross-origin access so a browser UI on another origin can call this API (e.g. the bundled UI pointed at a remote server). Bearer auth still applies: CORS decides whether a browser shows a page the answer, never whether the server gives one.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": "boolean",
+              "description": "Handle CORS preflight and emit Access-Control-* headers for allowed origins.",
+              "default": false
+            },
+            "allow_loopback": {
+              "type": "boolean",
+              "description": "Also allow any page served from the browser's own machine: an http or https origin whose host is localhost, a *.localhost name, 127.0.0.0/8 or [::1], on any port. The laptop case of a remote coddy serve, where the web UI comes from the laptop's own coddy serve and its port moves. Narrower than \"*\", and like \"*\" only as safe as the token or sign-in behind the API.",
+              "default": false
+            },
+            "allowed_origins": {
+              "type": "array",
+              "description": "Exact origins permitted to call the API, e.g. \"http://localhost:5173\". A single \"*\" allows any origin.",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          }
+        },
+        "remotes": {
+          "type": "array",
+          "description": "Remote coddy serve servers and swarm relays offered in the UI environment selector and resolved by `coddy --remote <name>`. An entry may carry the token to present; without one the UI keeps the token in the browser per remote and the console reads --remote-token or CODDY_REMOTE_TOKEN.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Display label for the remote. Empty: the web UI shows the name the remote reports (a relay's swarm.name, else the host name it runs on; an agent's host name), else its address."
+              },
+              "url": {
+                "type": "string",
+                "description": "Base URL of the remote coddy serve server or relay, e.g. \"https://box.example:12345\"."
+              },
+              "token": {
+                "type": "string",
+                "description": "Bearer token to present to this remote: a relay's client token (swarm.auth_token) or a server's httpserver.auth_token, usually a ${ENV} reference. Optional and opt-in: every browser that reads this configuration receives it, and coddy --remote <name> uses it when --remote-token is not given. A node mounted under a relay (<url>/swarm/nodes/<name>) takes the relay's token."
+              }
+            }
+          },
+          "default": []
+        }
+      }
+    },
+    "swarm": {
+      "type": "object",
+      "title": "Swarm relay",
+      "description": "Stateless relay that nodes register into and that chains into other relays. The relay itself needs -tags swarm and swarm.enable; the join list below is honoured by any coddy serve process, which is what makes an ordinary agent reachable through a relay. See https://coddy.dev/docs/operate/swarm.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run the swarm relay in this process. Independent of swarm.join, which is how an agent registers into a parent relay."
+        },
+        "host": {
+          "type": "string",
+          "description": "Bind address for the relay when the CLI does not pass --swarm-host. Empty falls back to 0.0.0.0.",
+          "default": ""
+        },
+        "port": {
+          "type": "integer",
+          "description": "Listen port for the relay. 0 falls back to 12346.",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "name": {
+          "type": "string",
+          "description": "Label for this relay in topology views, in /swarm/info and in a child's node path. Empty: the host name it runs on.",
+          "default": ""
+        },
+        "auth_token": {
+          "type": "string",
+          "description": "Bearer credential clients present to this relay. A relay reaches every node with that node's own credential, so an unauthenticated relay bound off loopback is a fleet-wide open door and the server refuses to start unless allow_insecure is set. Never echoed back.",
+          "default": ""
+        },
+        "pairing_tokens": {
+          "type": "array",
+          "description": "Credentials a node must present to register. Empty closes registration unless insecure_open_registration is set. Never echoed back.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "allow_insecure": {
+          "type": "boolean",
+          "description": "Permit binding off loopback without a client token.",
+          "default": false
+        },
+        "insecure_open_registration": {
+          "type": "boolean",
+          "description": "Let any caller register a node without a pairing token. Development only.",
+          "default": false
+        },
+        "allow_private_upstreams": {
+          "type": "array",
+          "description": "Hosts a node may advertise even though they resolve into loopback or private ranges, which are otherwise refused so a registration cannot turn the relay into a probe of its own network.",
+          "items": {
+            "type": "string"
+          },
+          "default": []
+        },
+        "cors": {
+          "type": "object",
+          "title": "CORS",
+          "description": "Cross-origin access for the relay API. The SPA reaches a relay from another origin by construction, so this usually has to be on. Allow-Headers includes Last-Event-ID so an SSE stream can be resumed through the relay.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": "boolean",
+              "description": "Handle CORS preflight and emit Access-Control-* headers for allowed origins.",
+              "default": false
+            },
+            "allow_loopback": {
+              "type": "boolean",
+              "description": "Also allow any page served from the browser's own machine: an http or https origin whose host is localhost, a *.localhost name, 127.0.0.0/8 or [::1], on any port. A laptop's web UI reaching this relay, whatever port its own coddy serve took. Narrower than \"*\"; the client token still applies.",
+              "default": false
+            },
+            "allowed_origins": {
+              "type": "array",
+              "description": "Exact origins permitted to call the API, e.g. \"http://localhost:5173\". A single \"*\" allows any origin.",
+              "items": {
+                "type": "string"
+              },
+              "default": []
+            }
+          }
+        },
+        "tls": {
+          "type": "object",
+          "title": "Relay TLS",
+          "description": "Serve the relay over HTTPS. Set both files or neither. Minimum TLS 1.2; certificates are startup state, so rotating them needs a restart.",
+          "additionalProperties": false,
+          "properties": {
+            "cert_file": {
+              "type": "string",
+              "description": "PEM certificate chain.",
+              "default": ""
+            },
+            "key_file": {
+              "type": "string",
+              "description": "PEM private key.",
+              "default": ""
+            }
+          }
+        },
+        "lease_ttl_seconds": {
+          "type": "integer",
+          "description": "How long a registration survives without a heartbeat. 0 falls back to 90; nodes refresh at a third of it.",
+          "default": 0,
+          "minimum": 0
+        },
+        "fanout_timeout_seconds": {
+          "type": "integer",
+          "description": "Per-node deadline for an aggregated call. A slower node degrades into a warning rather than stalling the answer. 0 falls back to 3.",
+          "default": 0,
+          "minimum": 0
+        },
+        "upstreams": {
+          "type": "array",
+          "description": "Nodes configured by hand rather than registered, for an agent that cannot run the join loop.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "type": "string",
+                "description": "Node name; becomes a URL path segment, so letters, digits, underscore and hyphen only."
+              },
+              "url": {
+                "type": "string",
+                "description": "Origin the relay dials to reach the node."
+              },
+              "kind": {
+                "type": "string",
+                "description": "agent (default) or relay.",
+                "enum": [
+                  "",
+                  "agent",
+                  "relay"
+                ],
+                "default": ""
+              },
+              "token": {
+                "type": "string",
+                "description": "Bearer credential the relay presents to this node. Never echoed back.",
+                "default": ""
+              },
+              "dial": {
+                "type": "object",
+                "title": "Dial settings",
+                "description": "How this leg reaches the other side. Relays are expected to live in different networks, so a proxy hop and a private certificate authority are ordinary here.",
+                "additionalProperties": false,
+                "properties": {
+                  "proxy": {
+                    "type": "string",
+                    "description": "Route the connection through a proxy: http, https, socks5 or socks5h. Empty falls back to the standard environment variables. Never echoed back.",
+                    "default": ""
+                  },
+                  "ca_file": {
+                    "type": "string",
+                    "description": "Certificate authority used to verify a peer whose certificate is signed privately.",
+                    "default": ""
+                  },
+                  "insecure_skip_verify": {
+                    "type": "boolean",
+                    "description": "Accept any certificate. For a lab only; every use is logged.",
+                    "default": false
+                  }
+                }
+              }
+            }
+          },
+          "default": []
+        },
+        "join": {
+          "type": "array",
+          "description": "Parent relays this process registers into on startup. Honoured whether or not this process runs a relay of its own, which is what lets relays chain.",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "url": {
+                "type": "string",
+                "description": "Parent relay origin."
+              },
+              "name": {
+                "type": "string",
+                "description": "Name to claim in that relay. Empty falls back to the host name.",
+                "default": ""
+              },
+              "pairing_token": {
+                "type": "string",
+                "description": "Credential authorising the registration. Never echoed back.",
+                "default": ""
+              },
+              "advertise_url": {
+                "type": "string",
+                "description": "Where the relay can reach this process. Leave empty to select the tunnel transport: this process dials out and serves its API back over that connection, which is the only way in when the network accepts no inbound connections.",
+                "default": ""
+              },
+              "token": {
+                "type": "string",
+                "description": "This process's own bearer credential, handed to the relay so it can authenticate when it proxies. Prefer a credential minted for the relay alone. Never echoed back.",
+                "default": ""
+              },
+              "labels": {
+                "type": "object",
+                "description": "Free-form tags shown in topology views.",
+                "additionalProperties": {
+                  "type": "string"
+                }
+              },
+              "dial": {
+                "type": "object",
+                "title": "Dial settings",
+                "description": "How this leg reaches the other side. Relays are expected to live in different networks, so a proxy hop and a private certificate authority are ordinary here.",
+                "additionalProperties": false,
+                "properties": {
+                  "proxy": {
+                    "type": "string",
+                    "description": "Route the connection through a proxy: http, https, socks5 or socks5h. Empty falls back to the standard environment variables. Never echoed back.",
+                    "default": ""
+                  },
+                  "ca_file": {
+                    "type": "string",
+                    "description": "Certificate authority used to verify a peer whose certificate is signed privately.",
+                    "default": ""
+                  },
+                  "insecure_skip_verify": {
+                    "type": "boolean",
+                    "description": "Accept any certificate. For a lab only; every use is logged.",
+                    "default": false
+                  }
+                }
+              }
+            }
+          },
+          "default": []
+        }
+      }
+    },
+    "browser": {
+      "type": "object",
+      "title": "Browser",
+      "description": "Coddy for Browser: the extension connects to the HTTP server, lets chats work in the user's browser through the browser tool and shows the web UI in its side panel; chats of other Coddy processes and of the swarm reach the browser through this server. Needs a binary built with the browser tag; off by default. See https://coddy.dev/docs/features/browser.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Offer the browser tool to the chats of this process. Needs browser.token, browser.remotes or both."
+        },
+        "token": {
+          "type": "string",
+          "default": "",
+          "description": "The extension key, at least 32 characters, independent of the HTTP API's credentials. With it the HTTP server accepts the extension (/browser/v1/connect), and it also signs the extension's side panel into the web UI, so keep it as secret as the API's token. Write-only. Use an environment reference to keep it out of YAML."
+        },
+        "serve_remote": {
+          "type": "boolean",
+          "default": false,
+          "description": "Let other Coddy processes drive the browsers connected here: a console or an editor on this machine, a node of the swarm. They call /coddy/browser/v1 with this server's API credential, and the extension asks the person before the first action of each such chat. Needs browser.token."
+        },
+        "remotes": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "default": [],
+          "description": "Coddy servers whose browsers the chats of this process may use, besides its own: a name of httpserver.remotes, or a server address such as a node mount of a swarm relay (https://relay:8443/swarm/nodes/home), whose token is found like --remote's. That server needs browser.serve_remote."
+        }
+      }
+    },
+    "metrics": {
+      "type": "object",
+      "title": "Metrics",
+      "description": "Prometheus exporter: GET /metrics on a port of its own, run by coddy serve. It takes effect only in a binary built with -tags metrics; other binaries refuse metrics.enable. Off by default.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "default": false,
+          "description": "Run the exporter in this process. Needs the metrics build tag."
+        },
+        "host": {
+          "type": "string",
+          "description": "Bind address of the exporter. Empty falls back to 127.0.0.1, which only this machine can reach.",
+          "default": ""
+        },
+        "port": {
+          "type": "integer",
+          "description": "Listen port of the exporter. 0 falls back to 12347.",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 65535
+        },
+        "token": {
+          "type": "string",
+          "description": "Bearer credential a scrape must present in its Authorization header. ${ENV} references are expanded at load. Empty means no authentication, so set one before binding off loopback. Never echoed back.",
+          "default": ""
+        }
+      }
+    },
+    "ui": {
+      "type": "object",
+      "title": "Embedded web UI",
+      "description": "Controls the bundled single-page UI (only meaningful in binaries built with -tags http,ui).",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Serve the embedded SPA at GET /. Defaults to true; set false to run an API-only server (the API still requires httpserver.auth_token when configured).",
+          "default": true
+        }
+      }
+    },
+    "scheduler": {
+      "type": "object",
+      "title": "Cron scheduler",
+      "description": "Cron-driven scheduled jobs (used only by binaries built with -tags scheduler). Jobs are flat *.md files with YAML frontmatter in ${CODDY_HOME}/scheduler (user jobs) and <workspace>/.coddy/scheduler (project jobs, which run once approved); five-field crontab in UTC. A run is a background agent task under the job's own session, which is the job's run history.",
+      "additionalProperties": false,
+      "properties": {
+        "enable": {
+          "type": "boolean",
+          "description": "Run the scheduler daemon and expose the coddy_scheduler_* tools. Can also be forced per process with coddy serve --scheduler (or coddy acp -scheduler).",
+          "default": false
+        },
+        "max_queue": {
+          "type": "integer",
+          "description": "Runs in flight across all jobs at once; a due slot past the cap is skipped until a run finishes, and a manual run past it is refused.",
+          "default": 10
+        },
+        "timeout": {
+          "type": "string",
+          "description": "Wall-clock limit for one run, as a Go duration (e.g. \"30m\", \"1h30m\"); the background task pool still caps it at tools.background.max_timeout_seconds.",
+          "default": "30m"
+        },
+        "project_trust": {
+          "type": "string",
+          "description": "Trust policy for project jobs, the *.md files in <workspace>/.coddy/scheduler that travel with the checkout: \"ask\" lists them but runs one only once the operator approved that exact file for that workspace (the shield in the scheduler drawer, or POST /coddy/scheduler/jobs/{job_id}/trust?scope=project from a session in it); a job the operator creates through Coddy is approved at once; \"allow\" runs them like the operator's own jobs; \"deny\" never runs them. See https://coddy.dev/docs/operate/scheduler#project-jobs-and-trust.",
+          "default": "ask",
+          "enum": [
+            "ask",
+            "allow",
+            "deny"
+          ]
+        },
+        "retain_sessions": {
+          "type": "integer",
+          "description": "Finished runs kept per job_id (their task records and transcripts under the job session); older runs are removed when a run finishes.",
+          "default": 5
+        }
+      }
+    },
+    "gateways": {
+      "type": "object",
+      "title": "Messenger gateways",
+      "description": "Messenger bot adapters (used only by binaries built with -tags gateway, or -tags gateway.telegram / gateway.pachca for one adapter; started by coddy serve alongside every other enabled subsystem). See https://coddy.dev/docs/surfaces/gateway and https://coddy.dev/docs/surfaces/pachca.",
+      "additionalProperties": false,
+      "properties": {
+        "telegram": {
+          "type": "object",
+          "description": "Telegram bot adapter.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": "boolean",
+              "description": "Poll Telegram in this coddy serve process.",
+              "default": false
+            },
+            "token": {
+              "type": "string",
+              "description": "Bot token from @BotFather. Leave empty to read the TELEGRAM_BOT_TOKEN environment variable (e.g. via ~/.coddy/.env).",
+              "default": ""
+            },
+            "proxy": {
+              "type": "string",
+              "description": "inherit (the default, the same as leaving the key out), none, or a proxy URL: http://, https://, socks5:// or socks5h://, read like providers[].proxy. inherit follows the proxy the environment of the Coddy process names - HTTPS_PROXY, HTTP_PROXY and NO_PROXY, never for a loopback address; ALL_PROXY is not read. none connects the bot directly and ignores those variables. A proxy URL sends every Bot API request through that proxy; with SOCKS the proxy resolves host names.",
+              "default": "inherit"
+            },
+            "rich_messages": {
+              "type": "boolean",
+              "description": "Use Bot API 10.1 Rich Messages (native Markdown, streamed thinking placeholder, collapsible tool list). Falls back to legacy formatting when unsupported.",
+              "default": false
+            },
+            "admins": {
+              "type": "array",
+              "description": "Telegram user IDs with elevated rights; admins always pass access checks.",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "default_access": {
+              "type": "string",
+              "description": "Fallback access level for chats without an override: \"all\", \"admins\", or \"group:<name>\".",
+              "default": "all"
+            },
+            "default_isolation": {
+              "type": "string",
+              "description": "Fallback session isolation for group chats: \"individual\" (session per user), \"shared\" (one session for all), \"admin\" (admins only, shared session).",
+              "default": "individual",
+              "enum": [
+                "individual",
+                "shared",
+                "admin"
+              ]
+            },
+            "user_groups": {
+              "type": "array",
+              "description": "Named sets of user IDs referenced from access fields as group:<name>.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Group name referenced as group:<name>."
+                  },
+                  "user_ids": {
+                    "type": "array",
+                    "description": "Telegram numeric user IDs in this group.",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "chats": {
+              "type": "array",
+              "description": "Per-chat overrides; chat_id is negative for groups and supergroups.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "chat_id"
+                ],
+                "properties": {
+                  "chat_id": {
+                    "type": "integer",
+                    "description": "Telegram chat id (negative for groups/supergroups)."
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "description": "Per-chat session isolation override.",
+                    "enum": [
+                      "individual",
+                      "shared",
+                      "admin"
+                    ]
+                  },
+                  "access": {
+                    "type": "string",
+                    "description": "Per-chat access override: \"all\", \"admins\", or \"group:<name>\"."
+                  }
+                }
+              }
+            },
+            "mini_app": {
+              "type": "object",
+              "description": "Makes the web UI of this coddy serve the bot's Telegram Mini App. The web UI adapts to Telegram by itself; these keys tell the bot where it is, so it can set its menu button and answer /app with a button that opens the chat's own conversation. Telegram opens Mini Apps over https only, so the web UI has to be published behind a TLS proxy, with sign-in on (httpserver.login). See https://coddy.dev/docs/surfaces/gateway#mini-app.",
+              "additionalProperties": false,
+              "properties": {
+                "url": {
+                  "type": "string",
+                  "description": "The public https address the web UI is served at, for example https://coddy.example.com/. Plain http is accepted only for a loopback host (an offline stand such as tgfake). No fragment: Telegram puts its launch parameters there. Empty: the bot offers no Mini App and leaves a menu button set in @BotFather alone.",
+                  "default": ""
+                },
+                "menu_button": {
+                  "type": [
+                    "boolean",
+                    "null"
+                  ],
+                  "description": "Make the bot's menu button (beside the message field) open the web UI. Turned off, with url emptied or while the web UI asks for no sign-in, the bot puts back the menu button it replaced (a Mini App set in @BotFather, else the commands), as long as the button still opens the address the bot set.",
+                  "default": true
+                }
+              }
+            }
+          }
+        },
+        "max": {
+          "type": "object",
+          "description": "MAX messenger bot adapter: reads the bot's updates stream and answers through the MAX Bot API. Access and isolation read exactly like Telegram's; the token may come from the MAX_BOT_TOKEN environment variable instead of this file.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": "boolean",
+              "description": "Run the MAX bot in this coddy serve process.",
+              "default": false
+            },
+            "token": {
+              "type": "string",
+              "description": "Bot token of the MAX bot. Leave empty to read the MAX_BOT_TOKEN environment variable (e.g. via ~/.coddy/.env).",
+              "default": ""
+            },
+            "proxy": {
+              "type": "string",
+              "description": "inherit (the default, the same as leaving the key out), none, or a proxy URL: http://, https://, socks5:// or socks5h://, read like providers[].proxy. inherit follows HTTPS_PROXY, HTTP_PROXY and NO_PROXY of the Coddy process; none connects directly; a proxy URL sends every MAX API request through that proxy.",
+              "default": "inherit"
+            },
+            "ca_file": {
+              "type": "string",
+              "description": "PEM bundle of additional root certificates for the MAX API, for example the MinCifry root. Empty uses the system trust store.",
+              "default": ""
+            },
+            "poll_timeout_seconds": {
+              "type": "integer",
+              "description": "How long the server may hold one poll open, in seconds (1 to 60).",
+              "default": 30,
+              "minimum": 1,
+              "maximum": 60
+            },
+            "poll_interval_seconds": {
+              "type": "integer",
+              "description": "Pause between two polls, in seconds (1 to 60).",
+              "default": 1,
+              "minimum": 1,
+              "maximum": 60
+            },
+            "admins": {
+              "type": "array",
+              "description": "MAX user IDs with elevated rights; admins always pass access checks.",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "default_access": {
+              "type": "string",
+              "description": "Fallback access level for chats without an override: \"all\", \"admins\", or \"group:<name>\".",
+              "default": "all"
+            },
+            "default_isolation": {
+              "type": "string",
+              "description": "Fallback session isolation for group chats: \"individual\" (session per user), \"shared\" (one session for all), \"admin\" (admins only, shared session).",
+              "default": "individual",
+              "enum": [
+                "individual",
+                "shared",
+                "admin"
+              ]
+            },
+            "user_groups": {
+              "type": "array",
+              "description": "Named sets of user IDs referenced from access fields as group:<name>.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Group name referenced as group:<name>."
+                  },
+                  "user_ids": {
+                    "type": "array",
+                    "description": "MAX user IDs in this group.",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "chats": {
+              "type": "array",
+              "description": "Per-chat overrides keyed by the MAX chat id (a direct chat or a group).",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "chat_id"
+                ],
+                "properties": {
+                  "chat_id": {
+                    "type": "integer",
+                    "description": "MAX chat id."
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "description": "Per-chat session isolation override.",
+                    "enum": [
+                      "individual",
+                      "shared",
+                      "admin"
+                    ]
+                  },
+                  "access": {
+                    "type": "string",
+                    "description": "Per-chat access override: \"all\", \"admins\", or \"group:<name>\"."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "pachca": {
+          "type": "object",
+          "description": "Pachca integration bot adapter: reads the bot's events history and answers through the Pachca REST API. Turn on Save events history (events_history_enabled) in the bot's outgoing webhook settings. See https://coddy.dev/docs/surfaces/pachca.",
+          "additionalProperties": false,
+          "properties": {
+            "enable": {
+              "type": "boolean",
+              "description": "Run the Pachca bot in this coddy serve process.",
+              "default": false
+            },
+            "token": {
+              "type": "string",
+              "description": "Access token of the Pachca integration bot. Leave empty to read the PACHCA_BOT_TOKEN environment variable (e.g. via ~/.coddy/.env).",
+              "default": ""
+            },
+            "proxy": {
+              "type": "string",
+              "description": "inherit (the default, the same as leaving the key out), none, or a proxy URL: http://, https://, socks5:// or socks5h://, read like providers[].proxy. inherit follows HTTPS_PROXY, HTTP_PROXY and NO_PROXY of the Coddy process; none connects directly; a proxy URL sends every Pachca API request through that proxy.",
+              "default": "inherit"
+            },
+            "poll_interval_seconds": {
+              "type": "integer",
+              "description": "How often the events history is read, in seconds (1 to 60). Pachca answers that method at about five requests per two seconds.",
+              "default": 2,
+              "minimum": 1,
+              "maximum": 60
+            },
+            "admins": {
+              "type": "array",
+              "description": "Pachca user IDs with elevated rights; admins always pass access checks.",
+              "items": {
+                "type": "integer"
+              }
+            },
+            "default_access": {
+              "type": "string",
+              "description": "Fallback access level for chats without an override: \"all\", \"admins\", or \"group:<name>\".",
+              "default": "all"
+            },
+            "default_isolation": {
+              "type": "string",
+              "description": "Fallback session isolation for group chats: \"individual\" (session per user), \"shared\" (one session for all), \"admin\" (admins only, shared session).",
+              "default": "individual",
+              "enum": [
+                "individual",
+                "shared",
+                "admin"
+              ]
+            },
+            "user_groups": {
+              "type": "array",
+              "description": "Named sets of user IDs referenced from access fields as group:<name>.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "description": "Group name referenced as group:<name>."
+                  },
+                  "user_ids": {
+                    "type": "array",
+                    "description": "Pachca user IDs in this group.",
+                    "items": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            },
+            "chats": {
+              "type": "array",
+              "description": "Per-chat overrides keyed by the Pachca chat id (a thread has a chat id of its own).",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "chat_id"
+                ],
+                "properties": {
+                  "chat_id": {
+                    "type": "integer",
+                    "description": "Pachca chat id."
+                  },
+                  "isolation": {
+                    "type": "string",
+                    "description": "Per-chat session isolation override.",
+                    "enum": [
+                      "individual",
+                      "shared",
+                      "admin"
+                    ]
+                  },
+                  "access": {
+                    "type": "string",
+                    "description": "Per-chat access override: \"all\", \"admins\", or \"group:<name>\"."
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}

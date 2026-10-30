@@ -1,0 +1,126 @@
+# Coddy documentation
+
+Coddy is a general-purpose agent in one static Go binary: a ReAct loop with filesystem and shell tools, MCP servers, project rules, skills, subagents, hooks, background tasks, a cron scheduler and long-term memory, driven from a terminal console, an embedded web UI with an OpenAI-compatible HTTP API, editors over the Agent Client Protocol, or a Telegram bot. Every surface shares the same sessions under `~/.coddy`.
+
+New here? Read [Quickstart](getting-started/quickstart.md), then the page of the surface you use. This map is generated from [nav.yaml](nav.yaml) by `make docs`; the same list feeds <https://coddy.dev/llms.txt> and <https://coddy.dev/llms-full.txt> for agents that read documentation, built on every run and published from the site rather than kept here. How the pages are organised and what a change to Coddy must carry into them is in [Writing documentation](contributing/documentation.md).
+
+<!-- docsgen:nav:start -->
+## Getting started
+
+Install Coddy, give it a model, run it for the first time and keep it updated.
+
+- [Quickstart](getting-started/quickstart.md) - From a fresh install to the first answer in five minutes, on the console, in the browser and from an editor.
+- [Install](getting-started/install.md) - One-line installers, release archives, Linux .deb and .rpm packages, Homebrew, Termux on Android, Windows paths, manual placement.
+- [Configuration](getting-started/configuration.md) - Where config.yaml lives, how to check it with -t and --dry-run, providers and models, SSH remote execution, the .env file.
+- [Update](getting-started/update.md) - coddy update, release assets, installations owned by a package manager, the report of what changed.
+- [Docker](getting-started/docker.md) - The GHCR image, docker compose, volumes and environment, the bundled UI on port 12345.
+- [Homebrew](getting-started/homebrew.md) - The cask against the formula, which Homebrew repository takes what, the homebrew/core submission.
+- [Android (Termux)](getting-started/android.md) - The Android build for Termux, why the Linux archive does not start there, and what Coddy adapts on the device.
+- [Troubleshooting](getting-started/troubleshooting.md) - What to check when the binary is not on PATH, the config does not load, a provider rejects the key, a port is busy or a surface is missing from the build.
+- [Changelog](getting-started/changelog.md) - Release notes of every published version, generated from GitHub Releases.
+
+## Surfaces
+
+The same agent and the same sessions from a terminal, a browser, an editor or a messenger.
+
+- [Console (TUI)](surfaces/console.md) - Bare coddy in a terminal, the layout, keys, slash commands, the local shell, print mode and remote mode.
+- [Web UI](surfaces/web-ui.md) - The embedded single-page app served by coddy serve, with sessions, the composer, modes and models, attachments, settings, themes and languages.
+- [Editors (ACP)](surfaces/editors.md) - Zed, VS Code, Obsidian and scripts as ACP clients of coddy acp, and what they share with the other surfaces.
+- [Telegram gateway](surfaces/gateway.md) - The Telegram bot adapter, setup, access levels, session isolation, rich messages, the same chat live in the browser, writing a new adapter.
+- [Pachca gateway](surfaces/pachca.md) - The Pachca (Пачка) integration bot, setup in the workspace, the events history poll, groups, threads and direct chats, commands, limits.
+- [MAX gateway](surfaces/max.md) - The MAX (МАКС) bot, setup and the MinCifry root, the /updates long poll with an at-least-once cursor, access and isolation, commands, limits.
+
+## Operate
+
+Running Coddy as a service, reaching it from elsewhere and bounding what it may do.
+
+- [coddy serve and the daemon](operate/serve.md) - One process for every enabled subsystem, the systemd user service (serve install and uninstall), --daemon with status, stop and restart, and configuration reloads.
+- [Monitoring](operate/monitoring.md) - The Prometheus exporter of coddy serve, enabling it and binding it in a container, the scrape config, every metric, the shipped alert rules and what is never exported.
+- [Remote mode](operate/remote.md) - Driving a remote coddy serve from the console, ACP or the web UI with --remote, tokens, CORS and the environment menu.
+- [Swarm](operate/swarm.md) - Relays and nodes, mounts, the aggregated session list, rings and routes, the reverse tunnel.
+- [Scheduler](operate/scheduler.md) - Cron job files, UTC firing rules, runs as background agent tasks under a job session, the runs panel, the scheduler tools and REST.
+- [Security and trust](operate/security.md) - What the agent may execute and how to bound it, permission modes, project trust for MCP servers, hooks and subagents, tokens and CORS, what is not sandboxed.
+
+## Features
+
+What the agent can do and how each capability is configured.
+
+- [Operating modes](features/modes.md) - agent, plan and ask, which tools each mode allows and how to switch on every surface.
+- [Session settings](features/session-settings.md) - Switching the model, reasoning level, mode and permission mode from the conversation with /model, /reasoning, /think, /nothink, /agent, /plan, /ask and /permissions, for the session or the next turns, the permission dialog's session switch, and the model switching itself.
+- [Session goal and supervisor](features/session-supervisor.md) - /goal keeps the agent working until a second model, judging the evidence, finds the objective met and a read-only verifier confirms it; continuations, budgets, the watchdog for stalls and loops, the risk gate that blocks docker and migration changes.
+- [Sessions](features/sessions.md) - Session bundles on disk, resuming, history rewind on message edit, todo lists, the sessions CLI.
+- [Git worktrees](features/worktrees.md) - Fresh feature branches from origin, session moves, the web composer and project grouping.
+- [Rules and instructions](features/rules.md) - Rules from the .coddy, .agents, .cursor, .claude and .codex folders, AGENTS.md and DESIGN.md of a folder the agent enters, your own pair and rules in the agent home, instruction files, dialects by extension, activation.
+- [Skills](features/skills.md) - SKILL.md packs as slash commands, skills.dirs, the registries and the plugin command.
+- [Subagents](features/subagents.md) - spawn_agent, definition files, the built-ins, project trust receipts, capability narrowing, child sessions.
+- [Hooks](features/hooks.md) - Lifecycle hooks in Claude Code's hooks.json shape, events, matchers, the stdin payload, exit codes and JSON answers, project trust.
+- [MCP servers](features/mcp.md) - Connecting MCP servers over stdio, streamable HTTP and SSE, mcp.json files, workspace trust, enable switches, the management API.
+- [Devin](features/devin.md) - Using the models of a Devin (Cognition) account - browser sign-in or the Devin CLI login, one model per family with reasoning levels mapped to its variants, where the session token comes from.
+- [OpenCode](features/opencode.md) - Using the OpenCode Go and Console gateways with account login or a service account key - model protocols, client headers and gateway selection.
+- [ACP agent as a model](features/acp-provider.md) - Serving a local ACP agent (Claude Code, Codex, OpenCode, ZCode, another Coddy) as a model - the acp block, one agent session per Coddy session, its permission requests, plan and ask modes, the agent process.
+- [Web search](features/web-search.md) - The engines websearch asks, how a blocked backend is reported instead of counted as nothing found, the relevance gate, and pointing it at your own SearXNG.
+- [HTTP requests](features/http-requests.md) - The http_request tool - any method, headers, bodies, multipart uploads and downloads, a proxy and the certificate check per request, headers the configuration adds to every request - and the permission prompt that shows where a request goes and what it carries.
+- [Coddy for Browser](features/browser.md) - Your own browser - Chrome, Yandex Browser or Firefox - as the agent's hands through the Coddy for Browser extension - the browser tool, tab groups, website approvals, files, the web UI in its side panel, chats of other processes and of the swarm.
+- [Mentions](features/mentions.md) - Pointing at things with @ in a prompt - files anywhere on disk, line ranges, folders, other sessions, rules, subagents, web pages - resolved once into the message, with completion on every surface.
+- [Images](features/images.md) - The model looking at a picture - read of a PNG, JPEG, GIF or WebP file for a model marked multimodal, a screenshot an MCP tool returns, the limits, what the provider is sent, and the preview in the web UI and a Telegram chat.
+- [Pasting and marking up pictures](features/picture-markup.md) - A copied picture pasted into a prompt - ctrl+v in the console, a paste in the web UI - and the markup editor it opens in first, with pencil, shapes, arrow, text, crop, rotate and undo.
+- [Built-in documentation](features/built-in-docs.md) - This documentation inside the binary - the web UI's reader, F1 in the console, coddy docs, the agent's coddy_docs tools and @coddy:<page> mentions - searched with BM25, with no site involved.
+- [Message queue](features/message-queue.md) - Writing a follow-up while the agent works, when the running turn reads it, taking one back, the composer and console surfaces, the queue routes.
+- [Background tasks](features/background-tasks.md) - Detached commands, the task pool, timeouts, adoption of long foreground commands, program-wide permission grants.
+- [Preview server](features/preview-server.md) - Serving a project directory on a free localhost port so you can open HTML, JS and CSS work in a browser; the server as a background task, what it refuses to serve, the bind host.
+- [Canvas](features/canvas.md) - Live pages on a .canvas board in the Files window of the web UI - canvas_show and canvas_inspect, pointing at an element to ask for a change, the sandbox a frame runs in, and every board an Obsidian .canvas file of the workspace, read and written back as Obsidian writes it.
+- [Context compaction](features/compaction.md) - /compact and automatic summarisation at a threshold, the kept recent turns, result eviction with keep_result.
+- [Long-term memory](features/memory.md) - The memory subagent that runs per turn in the task pool, what it recalls and saves, how the report reaches the turn, the storage layout, configuration and cost.
+- [Command safety (decisions)](features/decisions.md) - The NeuralDeep decisions check that asks whether a shell command is safe before the permission gate: a safe command runs without a prompt, an unsafe one is asked about in every mode, bypass included, and rejected where nobody can answer.
+- [Session export](features/session-export.md) - /export and coddy sessions export, formats, path rules, trimming options, the JSON document.
+
+## Reference
+
+Complete lists, generated from the code wherever the code is the source of truth.
+
+- [CLI reference](reference/cli.md) - Every command, verb and flag of the coddy binary, generated from --help.
+- [config.yaml reference](reference/config.md) - Every field of config.yaml with its type, default and description, generated from the schema, plus the self-configuration tools.
+- [Environment variables](reference/environment-variables.md) - Every variable the binary reads, what it overrides and where it is documented.
+- [Slash commands](reference/slash-commands.md) - The built-in commands on each surface and how skills become commands.
+- [Keyboard](reference/keyboard.md) - The keys of the console TUI and of the web UI composer.
+- [Tools](reference/tools.md) - The built-in tools the model can call, their arguments, permissions and the modes that expose them.
+- [HTTP API](reference/http-api.md) - The OpenAI-compatible endpoints and the /coddy REST surface, authentication, sessions and headers, the OpenAPI document.
+- [ACP protocol](reference/acp-protocol.md) - How coddy acp implements the Agent Client Protocol, methods, notifications, permission and question requests.
+- [Browser protocol](reference/browser-protocol.md) - The JSON-RPC wire between coddy serve and the Coddy for Browser extension - the handshake, the tabs, the commands, website approval, file transfers, the side panel and the API for other Coddy processes.
+
+## Tutorials
+
+Task-shaped guides, each a complete path from a goal to a working result, with the configs and commands to copy, the check that it worked and what tends to go wrong.
+
+- [Coddy in CI](tutorials/coddy-in-ci.md) - A workflow file that runs coddy -p on every pull request, with the key in a secret and the answer in the job log.
+- [A Telegram bot for a team](tutorials/telegram-bot-for-a-team.md) - One bot for a team with coddy serve: the token, who may talk to it, group isolation, and the same chat live in the browser.
+- [A project set up for agents](tutorials/project-set-up-for-agents.md) - A repository that teaches any agent how it works: rules, AGENTS.md, skills, an MCP server and the trust receipts.
+- [A server driven from a laptop](tutorials/server-driven-from-a-laptop.md) - A coddy serve on a machine with the models and the workspace, driven from a laptop over the console, an editor and the browser.
+- [Coddy as a model in VS Code Copilot](tutorials/coddy-as-a-model-in-vs-code.md) - A running coddy serve registered in chatLanguageModels.json, so its models and its agent sit in Copilot's model picker, with sessions per request and the agent's permission gate.
+- [A skill of your own](tutorials/a-skill-of-your-own.md) - A SKILL.md that becomes a slash command on every surface, from the first file to a registry install.
+- [A swarm across your machines](tutorials/swarm-across-machines.md) - Workers on several machines join one relay, and a laptop drives any of them from its own web UI and console, with the relay and its agents in the environment menu and the map one click away.
+- [A relay and its nodes in Docker](tutorials/swarm-relay-and-nodes.md) - A Compose stand with a relay and nodes that dial out to it, the tokens, the checks, a mounted node from the console and the browser, scaling by adding nameless workers.
+- [A chain of relays](tutorials/swarm-multi-hop.md) - A second relay behind the first with its own nodes, two-hop mounts, the recursive session list, rings and alternates.
+- [Working with remote nodes](tutorials/swarm-remote-nodes.md) - Driving a node behind a relay from the console, an editor and the browser, what runs where, and which credential opens what.
+- [Android phones as swarm nodes](tutorials/swarm-android-nodes.md) - A phone running Coddy in Termux joins a relay on a laptop or a server and is driven from the relay's web UI and the console, with no open port on the phone.
+
+## Contributing
+
+How Coddy is built, tested, documented and released.
+
+- [Contributing guide](../CONTRIBUTING.md) - The development environment, the branch and pull request flow, what every change must carry.
+- [Writing documentation](contributing/documentation.md) - Page types, the navigation map, screenshots and videos, the assets index, generated references and the checks that guard them.
+- [Architecture](contributing/architecture.md) - System design and component overview, package boundaries, session modes, the directory structure.
+- [Build from source](contributing/build.md) - Prerequisites, make build, TAGS against go build -tags, the release binaries and the distribution packages.
+- [Integration tests with tgfake](contributing/tgfake.md) - The fake Telegram Bot API the bot is tested against - the version go.mod pins, the in-process suites, the end-to-end scripts, the CI job and moving to a new tgfake.
+- [AppSec scanning](contributing/security-scanning.md) - Trivy, semgrep and govulncheck locally and in CI through one script, the severity gate, the pinned Go toolchain, triage and suppression.
+- [Custom tools](contributing/custom-tools.md) - Adding a built-in tool to the registry, its schema and permission wiring, with a complete example.
+- [ReAct agent](contributing/react-agent.md) - The loop design, the system prompt structure, the tool-calling contract and mode-specific behaviour.
+- [Web UI design](../DESIGN.md) - Tokens, layout and component contracts of the embedded SPA.
+- [Codex hooks](contributing/codex-hooks.md) - How the Cursor rules reach a Codex CLI session working on this repository.
+- [OpenCode hooks](contributing/opencode-hooks.md) - Deterministic delivery of the Cursor rules to OpenCode sessions working on this repository.
+- [ZCode hooks](contributing/zcode-hooks.md) - Deterministic delivery of the Cursor rules to ZCode sessions working on this repository.
+- [Kimi Code hooks](contributing/kimi-code-hooks.md) - Deterministic delivery of the Cursor rules to Kimi Code sessions working on this repository.
+- [Syntax highlighting audit](contributing/syntax-highlighting-audit.md) - The NeuralDeep audit of code highlighting across the seven themes, its fixtures and how to re-run it.
+- [Agent notes](../AGENTS.md) - The repository map and contributor notes for coding agents.
+<!-- docsgen:nav:end -->

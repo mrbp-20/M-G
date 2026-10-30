@@ -1,0 +1,10 @@
+# Версия слоя MAX и версия Coddy, на которую он ложится.
+# Читается скриптом apply.sh; менять только вместе с содержимым overlay/.
+
+BASE_TAG=1.3.62
+BASE_COMMIT=902ee08f2eb713a61ff378c9bc34813d051b71d5
+LAYER_SOURCE_COMMIT=62126f832771572890c8ff0db7a019b24cd20f84
+LAYER_FILES=160
+LAYER_NEW=112
+LAYER_MODIFIED=48
+LAYER_DATE=2026-10-30

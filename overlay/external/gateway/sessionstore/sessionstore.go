@@ -1,0 +1,346 @@
+//go:build gateway || gateway.telegram || gateway.pachca || gateway.max
+
+// Package sessionstore maps stable messenger chat/user keys to Coddy session IDs.
+// Each unique (gateway, chatID, userID, isolation) combination yields a single session ID
+// that is replaced when the user sends /clear, or bound to an existing one by /resume.
+//
+// When a save path is supplied via NewPersisted, the map is written atomically to disk on
+// every mutation so the bot can resume existing conversations after a restart.
+package sessionstore
+
+import (
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"sync"
+
+	"github.com/EvilFreelancer/coddy-agent/internal/config"
+	"github.com/EvilFreelancer/coddy-agent/internal/session"
+)
+
+// Store maps session keys to Coddy session IDs.
+type Store struct {
+	mu       sync.Mutex
+	data     map[string]string
+	savePath string // empty = in-memory only
+	log      *slog.Logger
+	saveErr  error // the reason the last save failed, nil when it succeeded
+}
+
+// lastModelKey is a reserved map entry holding the model this gateway last
+// saw an operator pick. It cannot collide with a session key (those are
+// "gw:user:N" / "gw:chat:N…"), and a build that does not know it simply reads
+// one unused entry, so the file needs no format migration.
+const lastModelKey = "$last_model"
+
+// menuButtonKeyPrefix starts the reserved entry holding the address a bot
+// pointed its menu button at, one per bot id: the only menu button the bot may
+// later take back. menuButtonBeforeKeyPrefix holds the button it replaced, as
+// the Bot API's JSON, to put back then. Like $last_model, neither can collide
+// with a session key.
+const (
+	menuButtonKeyPrefix       = "$menu_button:"
+	menuButtonBeforeKeyPrefix = "$menu_button_before:"
+)
+
+// reservedKey reports whether key is one of the store's own entries rather
+// than a chat's session: they all start with "$".
+func reservedKey(key string) bool {
+	return strings.HasPrefix(key, "$")
+}
+
+// New creates an in-memory store with no disk persistence.
+func New() *Store {
+	return &Store{data: make(map[string]string)}
+}
+
+// NewPersisted creates a Store backed by savePath.
+// Any existing data is loaded immediately; a missing file is treated as an empty store.
+func NewPersisted(savePath string) *Store {
+	savePath = strings.TrimSpace(savePath)
+	s := &Store{data: make(map[string]string), savePath: savePath}
+	if savePath != "" {
+		_ = os.MkdirAll(filepath.Dir(savePath), 0o755)
+		_ = s.load() // missing file → fresh store, no error
+	}
+	return s
+}
+
+// SessionKey returns the string key for the given gateway/chat/user context.
+// Private chats always use individual isolation regardless of the configured mode.
+func SessionKey(gateway string, chatID, userID int64, mode config.IsolationMode, isGroup bool) string {
+	if !isGroup {
+		return fmt.Sprintf("%s:user:%d", gateway, userID)
+	}
+	switch mode {
+	case config.IsolationShared:
+		return fmt.Sprintf("%s:chat:%d", gateway, chatID)
+	case config.IsolationAdmin:
+		return fmt.Sprintf("%s:chat:%d:admin", gateway, chatID)
+	default: // IsolationIndividual
+		return fmt.Sprintf("%s:chat:%d:user:%d", gateway, chatID, userID)
+	}
+}
+
+// Get returns the Coddy session ID for key, creating a new random one when absent.
+func (s *Store) Get(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if id, ok := s.data[key]; ok {
+		return id
+	}
+	id := newID()
+	s.data[key] = id
+	s.saveUnlocked()
+	return id
+}
+
+// Peek returns the Coddy session ID mapped to key, or "" when the key has none.
+// Unlike Get it never mints one, so a caller that only reports what exists -
+// a log line, a status listing - leaves the store unchanged.
+func (s *Store) Peek(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data[key]
+}
+
+// Reset replaces the session ID for key with a fresh one and returns it.
+// Used by the /clear command.
+func (s *Store) Reset(key string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := newID()
+	s.data[key] = id
+	s.saveUnlocked()
+	return id
+}
+
+// LastModel returns the model this gateway last saw an operator pick, or ""
+// when nobody has picked one yet.
+func (s *Store) LastModel() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.data[lastModelKey]
+}
+
+// SetLastModel records the model an operator picked on this gateway; a fresh
+// session (no transcript, no saved pick) starts on it instead of the
+// configured default.
+func (s *Store) SetLastModel(id string) {
+	id = strings.TrimSpace(id)
+	if id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data[lastModelKey] == id {
+		return
+	}
+	s.data[lastModelKey] = id
+	s.saveUnlocked()
+}
+
+// MenuButton returns the address bot pointed its menu button at and the
+// button it replaced (Bot API JSON, "" for the bot's commands), as
+// SetMenuButton recorded them; an empty address means it set none.
+func (s *Store) MenuButton(bot int64) (url, before string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	id := strconv.FormatInt(bot, 10)
+	return s.data[menuButtonKeyPrefix+id], s.data[menuButtonBeforeKeyPrefix+id]
+}
+
+// SetMenuButton records the address bot pointed its menu button at and the
+// button it replaced; an empty address forgets both.
+func (s *Store) SetMenuButton(bot int64, url, before string) {
+	id := strconv.FormatInt(bot, 10)
+	url = strings.TrimSpace(url)
+	if url == "" {
+		before = ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	changed := false
+	for key, value := range map[string]string{menuButtonKeyPrefix + id: url, menuButtonBeforeKeyPrefix + id: before} {
+		old, had := s.data[key]
+		switch {
+		case value == "" && had:
+			delete(s.data, key)
+			changed = true
+		case value != "" && old != value:
+			s.data[key] = value
+			changed = true
+		}
+	}
+	if changed {
+		s.saveUnlocked()
+	}
+}
+
+// KeyFor returns the key that maps to sessionID. A background subagent asks
+// about its parent session, not about a chat, and this is how the bot finds the
+// conversation that session belongs to - after a restart too, since the map is
+// persisted.
+func (s *Store) KeyFor(sessionID string) (string, bool) {
+	if sessionID == "" {
+		return "", false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for key, id := range s.data {
+		if reservedKey(key) {
+			continue
+		}
+		if id == sessionID {
+			return key, true
+		}
+	}
+	return "", false
+}
+
+// ChatID returns the chat a session key addresses. A private conversation is
+// keyed by the user, and Telegram gives a private chat the id of that user.
+func ChatID(key string) (int64, bool) {
+	parts := strings.Split(key, ":")
+	if len(parts) < 3 {
+		return 0, false
+	}
+	switch parts[1] {
+	case "user", "chat":
+	default:
+		return 0, false
+	}
+	id, err := strconv.ParseInt(parts[2], 10, 64)
+	if err != nil {
+		return 0, false
+	}
+	return id, true
+}
+
+// Bind maps key to a session that already exists - the /resume command, where
+// a chat continues a session it did not start or left with /clear - and
+// persists the mapping like every other mutation. An empty id is ignored:
+// nothing may map a chat to no session, because Get would then answer ""
+// instead of minting one.
+func (s *Store) Bind(key, id string) {
+	id = strings.TrimSpace(id)
+	if key == "" || id == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.data[key] == id {
+		return
+	}
+	s.data[key] = id
+	s.saveUnlocked()
+}
+
+// KnownIDs returns all session IDs currently held in the store.
+// Used on startup to pre-populate the "already seen" set so restarting the bot
+// does not re-inject one-time initialization messages into existing sessions.
+func (s *Store) KnownIDs() []string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	ids := make([]string, 0, len(s.data))
+	for key, id := range s.data {
+		if reservedKey(key) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	return ids
+}
+
+// load reads the persisted map from disk. Must be called before any concurrent access.
+func (s *Store) load() error {
+	data, err := os.ReadFile(s.savePath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	return json.Unmarshal(data, &s.data)
+}
+
+// saveUnlocked writes the map to disk atomically. Must be called with mu held.
+//
+// A failed save is never silent: the chat-to-session link is what /resume and
+// every later turn of a conversation depend on, and a write that did not happen
+// looks exactly like a person who never wrote - until the restart, after which
+// the chat is a stranger again. The failure is logged and kept for LastSaveError.
+func (s *Store) saveUnlocked() {
+	if s.savePath == "" {
+		return
+	}
+	if err := s.writeUnlocked(); err != nil {
+		s.saveErr = err
+		s.logger().Warn("session store not saved", "path", s.savePath, "reason", err.Error())
+		return
+	}
+	s.saveErr = nil
+}
+
+// writeUnlocked does the write itself. The map goes to a temporary file in the
+// same directory and is renamed over the old one, so a reader never sees half a
+// file: rename within one directory is atomic on every system we build for.
+func (s *Store) writeUnlocked() error {
+	data, err := json.Marshal(s.data)
+	if err != nil {
+		return fmt.Errorf("marshal: %w", err)
+	}
+	dir := filepath.Dir(s.savePath)
+	base := filepath.Base(s.savePath)
+	tmp, err := os.CreateTemp(dir, "."+base+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() { _ = os.Remove(tmpPath) }()
+	if _, err := tmp.Write(data); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close: %w", err)
+	}
+	if err := os.Rename(tmpPath, s.savePath); err != nil {
+		return fmt.Errorf("rename: %w", err)
+	}
+	return nil
+}
+
+// logger returns the logger the store was given, or the process default.
+func (s *Store) logger() *slog.Logger {
+	if s.log != nil {
+		return s.log
+	}
+	return slog.Default()
+}
+
+// WithLogger makes the store report failed saves through lg instead of the
+// process default logger. A gateway passes the logger it already carries, so the
+// warning lands in the same file as the rest of its lines.
+func (s *Store) WithLogger(lg *slog.Logger) *Store {
+	s.log = lg
+	return s
+}
+
+// LastSaveError reports why the last save failed, or nil when it succeeded.
+func (s *Store) LastSaveError() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveErr
+}
+
+// newID generates a session ID. A conversation held in a messenger is an
+// ordinary Coddy session - the same id shape a console run or a browser tab
+// gets - so nothing downstream can tell where the person was sitting.
+func newID() string {
+	return session.NewSessionID()
+}

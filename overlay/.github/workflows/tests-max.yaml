@@ -1,0 +1,66 @@
+# Build and test gate for the gateway.
+#
+# The upstream tests workflow (.github/workflows/tests-on-pr.yaml) is disabled in
+# this repository along with the rest of the inherited pipeline: it needs PRs,
+# which this repository does not use, and the pipeline it belongs to expects
+# secrets and registries we do not have. This one takes its place and checks what
+# the security scan cannot: that the tree still compiles in both build-tag
+# variants and that the gateway packages pass their tests under the race
+# detector. The commands are the ones a developer runs; see docs/MAX-OVERLAY.md.
+
+name: Tests (MAX gateway)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  build-and-test:
+    name: Build and test
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # go.mod carries the toolchain the project builds with, so the runner
+      # installs that one instead of its own default.
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: |
+          out=$(gofmt -s -l .)
+          if [ -n "$out" ]; then
+            printf '::error::gofmt wants these files changed:\n%s\n' "$out"
+            exit 1
+          fi
+
+      - name: Vet
+        run: go vet -tags gateway.max ./...
+
+      # Both variants matter: without the tag the gateway is a stub, with it the
+      # adapter is compiled in.
+      - name: Build without the gateway tag
+        run: go build ./...
+
+      - name: Build with the gateway tag
+        run: go build -tags gateway.max ./...
+
+      # The whole gateway tree, not only the adapter: our layer also touches
+      # hub.go, serve.go, the access policy and the session store, and their
+      # tests are the ones that notice a broken hook.
+      - name: Test the gateway packages
+        run: go test -tags gateway.max -race -count=1 ./external/gateway/...

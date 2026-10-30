@@ -1,0 +1,108 @@
+# AppSec gate for the branch we work on.
+#
+# Why this file exists next to .github/workflows/security.yaml:
+#
+# The upstream workflow was written for a public project: it publishes SARIF to
+# GitHub code scanning, and code scanning is not available for a private
+# repository on the Free and Pro plans. Its two upload steps therefore failed on
+# every trusted run and turned the whole job red while the scan itself passed.
+# That workflow is disabled in this repository (Settings -> Actions -> Security
+# scan, or `PUT /repos/{owner}/{repo}/actions/workflows/security.yaml/disable`);
+# this one takes its place and points at the branch we work on.
+#
+# Same command, same pinned tool versions, same gate as a developer's
+# `make security` (scripts/security-scan.sh). SARIF publication stays opt-in:
+# set the repository variable ENABLE_CODE_SCANNING to true where code scanning
+# exists (a public repository), and the two upload steps start running.
+# See docs/MAX-OVERLAY.md.
+
+name: Security scan (MAX gateway)
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+defaults:
+  run:
+    shell: bash
+
+permissions:
+  contents: read
+
+jobs:
+  security-scan:
+    name: AppSec scanners
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: read
+      security-events: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The docker fallback of scripts/security-scan.sh: the runner ships
+      # docker, the images are pinned tag@sha256 in the script.
+      - name: Run trivy, semgrep and govulncheck
+        env:
+          # Optional and unused here: semgrep is report-only until its backlog
+          # is triaged, so a missing token changes nothing.
+          SEMGREP_APP_TOKEN: ${{ secrets.SEMGREP_APP_TOKEN }}
+        run: make security
+
+      # Decides whether publishing is possible at all. The scan above is
+      # mandatory and never skipped; only the publication is gated, and the
+      # skip is announced in the job summary so it cannot pass unnoticed.
+      - name: Code scanning availability
+        id: code-scanning
+        if: always()
+        env:
+          ENABLE_CODE_SCANNING: ${{ vars.ENABLE_CODE_SCANNING }}
+        run: |
+          if [ "${ENABLE_CODE_SCANNING:-}" = "true" ]; then
+            echo "available=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "available=false" >> "$GITHUB_OUTPUT"
+            {
+              echo ""
+              echo "### SARIF publication skipped"
+              echo ""
+              echo "Code scanning is not enabled for this repository, so the trivy"
+              echo "and semgrep SARIF files stay in the \`security-reports\` artifact"
+              echo "below. The scan and its gate ran regardless."
+              echo ""
+              echo "To publish where code scanning exists, set the repository"
+              echo "variable \`ENABLE_CODE_SCANNING\` to \`true\`."
+            } >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # always() so a gate failure still publishes the report that tripped it.
+      - name: Upload trivy SARIF
+        if: always() && steps.code-scanning.outputs.available == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: dist/security/trivy.sarif
+          category: trivy
+
+      - name: Upload semgrep SARIF
+        if: always() && steps.code-scanning.outputs.available == 'true'
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: dist/security/semgrep.sarif
+          category: semgrep
+
+      - name: Upload scan reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: dist/security/
+          include-hidden-files: false
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        run: cat dist/security/summary.md >> "$GITHUB_STEP_SUMMARY" || true

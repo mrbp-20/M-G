@@ -1,0 +1,1351 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// ConfigJSON is the JSON shape for GET/PUT /coddy/config (snake_case keys match YAML).
+type ConfigJSON struct {
+	Providers    []ProviderJSON   `json:"providers,omitempty"`
+	Models       []ModelJSON      `json:"models,omitempty"`
+	Toolsets     []ToolsetJSON    `json:"toolsets,omitempty"`
+	Agent        AgentJSON        `json:"agent,omitempty"`
+	Supervisor   Supervisor       `json:"supervisor,omitempty"`
+	Prompts      PromptsJSON      `json:"prompts,omitempty"`
+	Instructions InstructionsJSON `json:"instructions,omitempty"`
+	Skills       SkillsJSON       `json:"skills,omitempty"`
+	Rules        RulesJSON        `json:"rules,omitempty"`
+	MCP          MCPJSON          `json:"mcp,omitempty"`
+	Tools        ToolsJSON        `json:"tools,omitempty"`
+	Subagents    SubagentsJSON    `json:"subagents,omitempty"`
+	Hooks        HooksJSON        `json:"hooks,omitempty"`
+	Logger       LoggerJSON       `json:"logger,omitempty"`
+	Sessions     SessionsJSON     `json:"sessions,omitempty"`
+	Compaction   CompactionJSON   `json:"compaction,omitempty"`
+	Memory       MemoryJSON       `json:"memory,omitempty"`
+	Decisions    DecisionsJSON    `json:"decisions,omitempty"`
+	HTTPServer   HTTPServerJSON   `json:"httpserver,omitempty"`
+	Swarm        SwarmJSON        `json:"swarm,omitempty"`
+	Metrics      MetricsJSON      `json:"metrics,omitempty"`
+	Browser      BrowserJSON      `json:"browser,omitempty"`
+	UI           UIJSON           `json:"ui,omitempty"`
+	Scheduler    SchedulerJSON    `json:"scheduler,omitempty"`
+	Gateways     GatewaysJSON     `json:"gateways,omitempty"`
+	// Revision names the configuration a GET /coddy/config document was read from.
+	// It is no setting: a client sends the document back with it unchanged, so a PUT
+	// can tell the values the client changed from the ones it only read, even when
+	// the live configuration moved in between (another save, the agent's
+	// config_commit, a hand edit). A document without one is measured against the
+	// configuration live when the PUT arrives.
+	Revision string `json:"revision,omitempty"`
+}
+
+// GatewaysJSON mirrors GatewayConfig for JSON APIs.
+type GatewaysJSON struct {
+	Telegram TelegramGatewayJSON `json:"telegram,omitempty"`
+	Pachca   PachcaGatewayJSON   `json:"pachca,omitempty"`
+	Max      MaxGatewayJSON      `json:"max,omitempty"`
+}
+
+// MaxGatewayJSON mirrors MaxGatewayConfig.
+type MaxGatewayJSON struct {
+	Enabled             bool                    `json:"enable,omitempty"`
+	Token               string                  `json:"token,omitempty"`
+	Proxy               string                  `json:"proxy,omitempty"`
+	CAFile              string                  `json:"ca_file,omitempty"`
+	PollTimeoutSeconds  int                     `json:"poll_timeout_seconds,omitempty"`
+	PollIntervalSeconds int                     `json:"poll_interval_seconds,omitempty"`
+	Admins              []int64                 `json:"admins,omitempty"`
+	DefaultAccess       string                  `json:"default_access,omitempty"`
+	DefaultIsolation    string                  `json:"default_isolation,omitempty"`
+	UserGroups          []TelegramUserGroupJSON `json:"user_groups,omitempty"`
+	Chats               []TelegramChatJSON      `json:"chats,omitempty"`
+}
+
+// PachcaGatewayJSON mirrors PachcaGatewayConfig.
+type PachcaGatewayJSON struct {
+	Enabled             bool                    `json:"enable,omitempty"`
+	Token               string                  `json:"token,omitempty"`
+	Proxy               string                  `json:"proxy,omitempty"`
+	PollIntervalSeconds int                     `json:"poll_interval_seconds,omitempty"`
+	Admins              []int64                 `json:"admins,omitempty"`
+	DefaultAccess       string                  `json:"default_access,omitempty"`
+	DefaultIsolation    string                  `json:"default_isolation,omitempty"`
+	UserGroups          []TelegramUserGroupJSON `json:"user_groups,omitempty"`
+	Chats               []TelegramChatJSON      `json:"chats,omitempty"`
+}
+
+// TelegramGatewayJSON mirrors TelegramGatewayConfig.
+type TelegramGatewayJSON struct {
+	Enabled          bool                    `json:"enable,omitempty"`
+	Token            string                  `json:"token,omitempty"`
+	Proxy            string                  `json:"proxy,omitempty"`
+	RichMessages     bool                    `json:"rich_messages,omitempty"`
+	Admins           []int64                 `json:"admins,omitempty"`
+	DefaultAccess    string                  `json:"default_access,omitempty"`
+	DefaultIsolation string                  `json:"default_isolation,omitempty"`
+	UserGroups       []TelegramUserGroupJSON `json:"user_groups,omitempty"`
+	Chats            []TelegramChatJSON      `json:"chats,omitempty"`
+	MiniApp          TelegramMiniAppJSON     `json:"mini_app"`
+}
+
+// TelegramMiniAppJSON mirrors TelegramMiniAppConfig.
+type TelegramMiniAppJSON struct {
+	URL        string `json:"url,omitempty"`
+	MenuButton *bool  `json:"menu_button,omitempty"`
+}
+
+// TelegramUserGroupJSON mirrors TelegramUserGroup.
+type TelegramUserGroupJSON struct {
+	Name    string  `json:"name"`
+	UserIDs []int64 `json:"user_ids,omitempty"`
+}
+
+// TelegramChatJSON mirrors TelegramChatConfig.
+type TelegramChatJSON struct {
+	ChatID    int64  `json:"chat_id"`
+	Isolation string `json:"isolation,omitempty"`
+	Access    string `json:"access,omitempty"`
+}
+
+// InstructionsJSON mirrors Instructions for JSON APIs.
+type InstructionsJSON struct {
+	Files []string `json:"files,omitempty"`
+}
+
+// ProviderJSON mirrors ProviderConfig for JSON APIs.
+// Field order and types must match ProviderConfig (direct struct conversion is used below).
+type ProviderJSON struct {
+	Name          string `json:"name"`
+	Type          string `json:"type"`
+	APIBase       string `json:"api_base,omitempty"`
+	APIKey        string `json:"api_key,omitempty"`
+	APIKeyCommand string `json:"api_key_command,omitempty"`
+	Proxy         string `json:"proxy,omitempty"`
+	TimeoutMS     int    `json:"timeout_ms,omitempty"`
+	// UsageLimitsPanel keeps the three states of the YAML key: absent (on),
+	// true, false. omitempty leaves an unset switch out of the document.
+	UsageLimitsPanel *bool `json:"usage_limits_panel,omitempty"`
+	// ACP carries its own json tags (ACPProviderConfig), so the block keeps
+	// the YAML keys in the JSON document.
+	ACP *ACPProviderConfig `json:"acp,omitempty"`
+}
+
+// ModelJSON mirrors ModelEntry for JSON APIs.
+// Field order and types must match ModelEntry (direct struct conversion is used below).
+type ModelJSON struct {
+	Model            string  `json:"model"`
+	MaxTokens        int     `json:"max_tokens"`
+	Temperature      float64 `json:"temperature"`
+	MaxContextTokens int     `json:"max_context_tokens,omitempty"`
+	Multimodal       bool    `json:"multimodal,omitempty"`
+	// ReasoningLevels keeps the unset/explicit distinction of ModelEntry.ReasoningLevels:
+	// an omitted key auto-detects, an explicit [] hides the reasoning selector. A plain
+	// slice would collapse both into "absent" on the way out to the settings UI.
+	ReasoningLevels   *[]string `json:"reasoning_levels,omitempty"`
+	ReasoningDefault  string    `json:"reasoning_default,omitempty"`
+	AllowReasoningOff bool      `json:"allow_reasoning_off,omitempty"`
+	// Stream keeps the unset/explicit distinction of ModelEntry.Stream: a settings
+	// round trip must not turn an omitted key into an explicit false.
+	Stream  *bool  `json:"stream,omitempty"`
+	Toolset string `json:"toolset,omitempty"`
+}
+
+// ToolsetJSON mirrors Toolset. Empty and absent lists mean the same (no
+// restriction), so plain slices with omitempty round-trip them losslessly.
+type ToolsetJSON struct {
+	Name            string   `json:"name"`
+	Tools           []string `json:"tools,omitempty"`
+	DisallowedTools []string `json:"disallowed_tools,omitempty"`
+}
+
+// AgentJSON mirrors Agent for JSON APIs. Pointer fields keep the unset/explicit
+// distinction where an explicit 0 means something different from "unset":
+// max_turns (0 disables the cap), loop-guard counters, llm_retry_max (0 disables retries),
+// llm_first_token_timeout_ms (0 disables the silence guard) and
+// llm_stream_idle_timeout_ms (0 disables the stall guard).
+type AgentJSON struct {
+	QueueMode              string `json:"queue_mode,omitempty"`
+	Model                  string `json:"model"`
+	MaxTurns               *int   `json:"max_turns,omitempty"`
+	LLMRetryMax            *int   `json:"llm_retry_max,omitempty"`
+	LLMRetryBaseMS         int    `json:"llm_retry_base_ms,omitempty"`
+	LLMMinIntervalMS       int    `json:"llm_min_interval_ms,omitempty"`
+	LLMFirstTokenTimeoutMS *int   `json:"llm_first_token_timeout_ms,omitempty"`
+	LLMStreamIdleTimeoutMS *int   `json:"llm_stream_idle_timeout_ms,omitempty"`
+	LoopGuard              *bool  `json:"loop_guard,omitempty"`
+	LoopToolRepeatLimit    *int   `json:"loop_tool_repeat_limit,omitempty"`
+	LoopStreamRepeatCycles *int   `json:"loop_stream_repeat_cycles,omitempty"`
+	LoopNudgeMax           *int   `json:"loop_nudge_max,omitempty"`
+	WaitForLimitReset      bool   `json:"wait_for_limit_reset,omitempty"`
+	WaitForLimitResetMaxMS *int   `json:"wait_for_limit_reset_max_ms,omitempty"`
+}
+
+// PromptsJSON mirrors Prompts for JSON APIs.
+type PromptsJSON struct {
+	Dir         string `json:"dir,omitempty"`
+	AgentPrompt string `json:"agent_prompt,omitempty"`
+	PlanPrompt  string `json:"plan_prompt,omitempty"`
+	AskPrompt   string `json:"ask_prompt,omitempty"`
+}
+
+// SkillsJSON mirrors Skills for JSON APIs.
+type SkillsJSON struct {
+	Dirs          []string `json:"dirs,omitempty"`
+	ProjectTrust  string   `json:"project_trust,omitempty"`
+	AutoDiscovery *bool    `json:"auto_discovery,omitempty"`
+}
+
+// RulesJSON mirrors Rules for JSON APIs.
+type RulesJSON struct {
+	AutoDiscover *bool    `json:"auto_discover,omitempty"`
+	Systems      []string `json:"systems,omitempty"`
+}
+
+// UIJSON mirrors UIConfig for JSON APIs.
+type UIJSON struct {
+	Enabled *bool `json:"enable,omitempty"`
+}
+
+// ToolsJSON mirrors Tools for JSON APIs.
+// MCPJSON mirrors MCP for JSON APIs.
+type MCPJSON struct {
+	ProjectTrust       string `json:"project_trust,omitempty"`
+	IdleTimeoutSeconds *int   `json:"idle_timeout_seconds,omitempty"`
+}
+
+type ToolsJSON struct {
+	CommandAllowlist  []string              `json:"command_allowlist,omitempty"`
+	SSHConnectTimeout int                   `json:"ssh_connect_timeout,omitempty"`
+	OutputLimits      ToolOutputLimitsJSON  `json:"output_limits,omitempty"`
+	Background        ToolBackgroundJSON    `json:"background,omitempty"`
+	PreviewServer     ToolPreviewServerJSON `json:"preview_server,omitempty"`
+	Canvas            ToolCanvasJSON        `json:"canvas,omitempty"`
+	WebSearch         ToolWebSearchJSON     `json:"websearch,omitempty"`
+	HTTPRequest       ToolHTTPRequestJSON   `json:"http_request,omitempty"`
+}
+
+// ToolWebSearchJSON mirrors ToolWebSearch for JSON APIs. BraveAPIKey travels
+// both ways, like a provider's api_key: it is a credential for a third-party
+// service the settings screen edits, not one that grants access to Coddy
+// itself, which is what the write-only fields (httpserver.auth_token, the login
+// hash, the swarm tokens) are. config_get still redacts it from the model.
+type ToolWebSearchJSON struct {
+	Engines              []string `json:"engines,omitempty"`
+	EngineTimeoutSeconds int      `json:"engine_timeout_seconds,omitempty"`
+	TotalTimeoutSeconds  int      `json:"total_timeout_seconds,omitempty"`
+	MaxConcurrentEngines int      `json:"max_concurrent_engines,omitempty"`
+	SnippetChars         int      `json:"snippet_chars,omitempty"`
+	CacheTTLSeconds      int      `json:"cache_ttl_seconds,omitempty"`
+	SearXNGURL           string   `json:"searxng_url,omitempty"`
+	BraveAPIKey          string   `json:"brave_api_key,omitempty"`
+}
+
+// ToolHTTPRequestJSON mirrors ToolHTTPRequest for JSON APIs. DefaultHeaders
+// travels both ways, like brave_api_key: the settings screen edits the headers,
+// and config_get is what keeps their values from the model.
+type ToolHTTPRequestJSON struct {
+	Allowlist      []string          `json:"allowlist,omitempty"`
+	DefaultHeaders map[string]string `json:"default_headers,omitempty"`
+}
+
+// ToolBackgroundJSON mirrors ToolBackground for JSON APIs.
+type ToolBackgroundJSON struct {
+	Enabled               *bool `json:"enable,omitempty"`
+	MaxConcurrent         int   `json:"max_concurrent,omitempty"`
+	DefaultTimeoutSeconds int   `json:"default_timeout_seconds,omitempty"`
+	MaxTimeoutSeconds     int   `json:"max_timeout_seconds,omitempty"`
+	OutputBufferBytes     int   `json:"output_buffer_bytes,omitempty"`
+}
+
+// ToolPreviewServerJSON mirrors ToolPreviewServer for JSON APIs: the Settings
+// form saves the whole config through this DTO, and a section missing here is
+// silently reset by any unrelated save.
+type ToolPreviewServerJSON struct {
+	Enabled    *bool  `json:"enable,omitempty"`
+	Host       string `json:"host,omitempty"`
+	PublicHost string `json:"public_host,omitempty"`
+}
+
+// ToolCanvasJSON mirrors ToolCanvas for JSON APIs.
+type ToolCanvasJSON struct {
+	Enabled        *bool    `json:"enable,omitempty"`
+	AllowCDN       *bool    `json:"allow_cdn,omitempty"`
+	AllowedSources []string `json:"allowed_sources,omitempty"`
+}
+
+// ToolOutputLimitsJSON mirrors ToolOutputLimits. Pointer fields keep the
+// unset (default) versus explicit-zero (unlimited) distinction.
+type ToolOutputLimitsJSON struct {
+	Read          *int `json:"read,omitempty"`
+	Grep          *int `json:"grep,omitempty"`
+	Glob          *int `json:"glob,omitempty"`
+	PrintTree     *int `json:"print_tree,omitempty"`
+	RunCommand    *int `json:"run_command,omitempty"`
+	SSHRunCommand *int `json:"ssh_run_command,omitempty"`
+	WebFetch      *int `json:"webfetch,omitempty"`
+	WebSearch     *int `json:"websearch,omitempty"`
+	Default       *int `json:"default,omitempty"`
+}
+
+// LoggerJSON mirrors Logger for JSON APIs.
+type LoggerJSON struct {
+	Level    string                     `json:"level,omitempty"`
+	Levels   []LoggerComponentLevelJSON `json:"levels,omitempty"`
+	Outputs  []string                   `json:"outputs,omitempty"`
+	File     string                     `json:"file,omitempty"`
+	Format   string                     `json:"format,omitempty"`
+	Rotation LoggerRotationJSON         `json:"rotation,omitempty"`
+}
+
+// LoggerComponentLevelJSON mirrors LoggerComponentLevel.
+type LoggerComponentLevelJSON struct {
+	Component string `json:"component,omitempty"`
+	Level     string `json:"level,omitempty"`
+}
+
+// LoggerRotationJSON mirrors LoggerRotation.
+type LoggerRotationJSON struct {
+	MaxSizeMB int `json:"max_size_mb,omitempty"`
+	MaxFiles  int `json:"max_files,omitempty"`
+}
+
+// SessionsJSON mirrors Sessions.
+type SessionsJSON struct {
+	Dir string `json:"dir,omitempty"`
+}
+
+// CompactionJSON mirrors Compaction. Pointer fields keep the unset/explicit
+// distinction (enabled defaults to true, keep_recent_turns to 2).
+type CompactionJSON struct {
+	Enabled          *bool              `json:"enable,omitempty"`
+	AutoEnabled      *bool              `json:"auto_enable,omitempty"`
+	ThresholdPercent int                `json:"threshold_percent,omitempty"`
+	KeepRecentTurns  *int               `json:"keep_recent_turns,omitempty"`
+	Model            string             `json:"model,omitempty"`
+	FallbackModels   []string           `json:"fallback_models,omitempty"`
+	ResultEviction   ResultEvictionJSON `json:"result_eviction,omitempty"`
+}
+
+// ResultEvictionJSON mirrors ResultEviction. Pointer fields keep the
+// unset/explicit distinction (enabled defaults to true, keep_recent to 2).
+type ResultEvictionJSON struct {
+	Enabled        *bool `json:"enable,omitempty"`
+	KeepRecent     *int  `json:"keep_recent,omitempty"`
+	MinResultBytes *int  `json:"min_result_bytes,omitempty"`
+	StartPercent   *int  `json:"start_percent,omitempty"`
+}
+
+// MemoryJSON mirrors MemoryConfig.
+type MemoryJSON struct {
+	Enabled          bool     `json:"enable,omitempty"`
+	Model            string   `json:"model,omitempty"`
+	FallbackModels   []string `json:"fallback_models,omitempty"`
+	Dir              string   `json:"dir,omitempty"`
+	WaitSeconds      *int     `json:"wait_seconds,omitempty"`
+	TimeoutSeconds   int      `json:"timeout_seconds,omitempty"`
+	KeepRuns         *int     `json:"keep_runs,omitempty"`
+	RecallMaxTurns   int      `json:"recall_max_turns,omitempty"`
+	PersistMaxTurns  int      `json:"persist_max_turns,omitempty"`
+	CopilotMaxTokens int      `json:"copilot_max_tokens,omitempty"`
+	MaxSearchHits    int      `json:"max_search_hits,omitempty"`
+	MaxNoteChars     *int     `json:"max_note_chars,omitempty"`
+	// AdditionalPrompt and its cap: the operator's instructions for the
+	// memory subagent (issue #266).
+	AdditionalPrompt         string `json:"additional_prompt,omitempty"`
+	AdditionalPromptMaxChars int    `json:"additional_prompt_max_chars,omitempty"`
+}
+
+// DecisionsJSON mirrors DecisionsConfig.
+type DecisionsJSON struct {
+	Enabled   bool    `json:"enable,omitempty"`
+	Model     string  `json:"model,omitempty"`
+	Threshold float64 `json:"threshold,omitempty"`
+}
+
+// HTTPServerJSON mirrors HTTPServerConfig. AuthToken is write-only: ConfigToJSONDTO never
+// populates it (redacted), reporting only whether one is set via AuthConfigured.
+type HTTPServerJSON struct {
+	Enabled        *bool         `json:"enable,omitempty"`
+	Host           string        `json:"host,omitempty"`
+	Port           int           `json:"port,omitempty"`
+	AuthToken      string        `json:"auth_token,omitempty"`
+	AuthConfigured bool          `json:"auth_configured,omitempty"`
+	Login          HTTPLoginJSON `json:"login,omitempty"`
+	// LoginConfigured and LoginSource report the sign-in form the way
+	// AuthConfigured reports the bearer token: whether an account exists and
+	// where it came from ("config" or "env"), never the credential itself.
+	LoginConfigured bool             `json:"login_configured,omitempty"`
+	LoginSource     string           `json:"login_source,omitempty"`
+	PublicDocs      bool             `json:"public_docs,omitempty"`
+	AllowInsecure   bool             `json:"allow_insecure,omitempty"`
+	CORS            HTTPCORSJSON     `json:"cors,omitempty"`
+	Remotes         []HTTPRemoteJSON `json:"remotes,omitempty"`
+}
+
+// HTTPLoginJSON mirrors HTTPLoginConfig. PasswordHash is write-only: reading
+// the config never returns it, and writing the config back without it keeps the
+// hash that is already on disk.
+type HTTPLoginJSON struct {
+	Enabled         *bool  `json:"enable,omitempty"`
+	Mode            string `json:"mode,omitempty"`
+	User            string `json:"user,omitempty"`
+	PasswordHash    string `json:"password_hash,omitempty"`
+	SessionTTLHours int    `json:"session_ttl_hours,omitempty"`
+}
+
+// HTTPCORSJSON mirrors HTTPCORSConfig.
+type HTTPCORSJSON struct {
+	Enabled        bool     `json:"enable,omitempty"`
+	AllowLoopback  bool     `json:"allow_loopback,omitempty"`
+	AllowedOrigins []string `json:"allowed_origins,omitempty"`
+}
+
+// HTTPRemoteJSON mirrors HTTPRemote. Token travels both ways, like a provider's
+// api_key: it is a credential for another server that the page itself presents
+// when it switches to that remote, not one that grants access to this server,
+// which is what the write-only fields are. config_get still redacts it.
+type HTTPRemoteJSON struct {
+	Name  string `json:"name"`
+	URL   string `json:"url"`
+	Token string `json:"token,omitempty"`
+}
+
+// SwarmJSON mirrors SwarmConfig. Every credential is write-only: reading the
+// config reports only whether one is set, the way HTTPServerJSON does, so an
+// authenticated endpoint never hands back the token that reached it.
+type SwarmJSON struct {
+	Enabled                  bool                `json:"enable,omitempty"`
+	Host                     string              `json:"host,omitempty"`
+	Port                     int                 `json:"port,omitempty"`
+	Name                     string              `json:"name,omitempty"`
+	AuthToken                string              `json:"auth_token,omitempty"`
+	AuthConfigured           bool                `json:"auth_configured,omitempty"`
+	PairingTokens            []string            `json:"pairing_tokens,omitempty"`
+	PairingConfigured        int                 `json:"pairing_configured,omitempty"`
+	AllowInsecure            bool                `json:"allow_insecure,omitempty"`
+	InsecureOpenRegistration bool                `json:"insecure_open_registration,omitempty"`
+	AllowPrivateUpstreams    []string            `json:"allow_private_upstreams,omitempty"`
+	CORS                     HTTPCORSJSON        `json:"cors,omitempty"`
+	TLS                      SwarmTLSJSON        `json:"tls,omitempty"`
+	LeaseTTLSeconds          int                 `json:"lease_ttl_seconds,omitempty"`
+	FanoutTimeoutSeconds     int                 `json:"fanout_timeout_seconds,omitempty"`
+	Upstreams                []SwarmUpstreamJSON `json:"upstreams,omitempty"`
+	Join                     []SwarmJoinJSON     `json:"join,omitempty"`
+}
+
+// MetricsJSON mirrors MetricsConfig. The token is write-only, the way the
+// swarm credentials are: reading the config reports only whether one is set.
+type MetricsJSON struct {
+	Enable          bool   `json:"enable,omitempty"`
+	Host            string `json:"host,omitempty"`
+	Port            int    `json:"port,omitempty"`
+	Token           string `json:"token,omitempty"`
+	TokenConfigured bool   `json:"token_configured,omitempty"`
+}
+
+// BrowserJSON keeps the extension key write-only in configuration reads.
+type BrowserJSON struct {
+	Enable          bool     `json:"enable,omitempty"`
+	Token           string   `json:"token,omitempty"`
+	TokenConfigured bool     `json:"token_configured,omitempty"`
+	ServeRemote     bool     `json:"serve_remote,omitempty"`
+	Remotes         []string `json:"remotes,omitempty"`
+}
+
+// SwarmTLSJSON mirrors SwarmTLSConfig.
+type SwarmTLSJSON struct {
+	CertFile string `json:"cert_file,omitempty"`
+	KeyFile  string `json:"key_file,omitempty"`
+}
+
+// SwarmDialJSON mirrors SwarmDialConfig. The proxy URL can carry credentials,
+// so it is write-only like the tokens.
+type SwarmDialJSON struct {
+	Proxy              string `json:"proxy,omitempty"`
+	ProxyConfigured    bool   `json:"proxy_configured,omitempty"`
+	CAFile             string `json:"ca_file,omitempty"`
+	InsecureSkipVerify bool   `json:"insecure_skip_verify,omitempty"`
+}
+
+// SwarmUpstreamJSON mirrors SwarmUpstream.
+type SwarmUpstreamJSON struct {
+	Name            string        `json:"name"`
+	URL             string        `json:"url"`
+	Kind            string        `json:"kind,omitempty"`
+	Token           string        `json:"token,omitempty"`
+	TokenConfigured bool          `json:"token_configured,omitempty"`
+	Dial            SwarmDialJSON `json:"dial,omitempty"`
+}
+
+// SwarmJoinJSON mirrors SwarmJoin.
+type SwarmJoinJSON struct {
+	URL                    string            `json:"url"`
+	Name                   string            `json:"name,omitempty"`
+	PairingToken           string            `json:"pairing_token,omitempty"`
+	PairingTokenConfigured bool              `json:"pairing_token_configured,omitempty"`
+	AdvertiseURL           string            `json:"advertise_url,omitempty"`
+	Token                  string            `json:"token,omitempty"`
+	TokenConfigured        bool              `json:"token_configured,omitempty"`
+	Labels                 map[string]string `json:"labels,omitempty"`
+	Dial                   SwarmDialJSON     `json:"dial,omitempty"`
+}
+
+// SubagentsJSON mirrors Subagents.
+type SubagentsJSON struct {
+	Enabled               *bool    `json:"enable,omitempty"`
+	Dirs                  []string `json:"dirs,omitempty"`
+	ProjectTrust          string   `json:"project_trust,omitempty"`
+	MaxConcurrent         int      `json:"max_concurrent,omitempty"`
+	MaxDepth              *int     `json:"max_depth,omitempty"`
+	DefaultTimeoutSeconds int      `json:"default_timeout_seconds,omitempty"`
+	MaxTurns              int      `json:"max_turns,omitempty"`
+}
+
+// HooksJSON mirrors Hooks.
+type HooksJSON struct {
+	Enabled               *bool    `json:"enable,omitempty"`
+	Files                 []string `json:"files,omitempty"`
+	ProjectTrust          string   `json:"project_trust,omitempty"`
+	DefaultTimeoutSeconds int      `json:"default_timeout_seconds,omitempty"`
+	StopLoopLimit         int      `json:"stop_loop_limit,omitempty"`
+	MaxOutputChars        int      `json:"max_output_chars,omitempty"`
+}
+
+// SchedulerJSON mirrors SchedulerConfig.
+type SchedulerJSON struct {
+	Enabled        bool   `json:"enable,omitempty"`
+	MaxQueue       int    `json:"max_queue,omitempty"`
+	Timeout        string `json:"timeout,omitempty"`
+	RetainSessions int    `json:"retain_sessions,omitempty"`
+	ProjectTrust   string `json:"project_trust,omitempty"`
+}
+
+// ConfigToJSONDTO copies a loaded Config into ConfigJSON (for GET /coddy/config).
+func ConfigToJSONDTO(c *Config) *ConfigJSON {
+	if c == nil {
+		return &ConfigJSON{}
+	}
+	out := &ConfigJSON{}
+	for _, p := range c.Providers {
+		pj := ProviderJSON(p)
+		// Hand the DTO its own copy of the pointer field, as the models do.
+		pj.UsageLimitsPanel = cloneBoolPtr(p.UsageLimitsPanel)
+		out.Providers = append(out.Providers, pj)
+	}
+	for _, m := range c.Models {
+		mj := ModelJSON(m)
+		// The struct conversion shares pointer fields with the live config; hand
+		// the DTO its own copies so a caller mutating one side cannot leak into
+		// the other, as the other pointer-typed sections already do.
+		mj.ReasoningLevels = cloneStringsPtr(m.ReasoningLevels)
+		mj.Stream = cloneBoolPtr(m.Stream)
+		out.Models = append(out.Models, mj)
+	}
+	for _, ts := range c.Toolsets {
+		out.Toolsets = append(out.Toolsets, ToolsetJSON{Name: ts.Name,
+			Tools:           append([]string(nil), ts.Tools...),
+			DisallowedTools: append([]string(nil), ts.DisallowedTools...)})
+	}
+	out.Agent = AgentJSON{
+		QueueMode:              c.Agent.QueueMode,
+		Model:                  c.Agent.Model,
+		MaxTurns:               intPtr(c.Agent.MaxTurns),
+		LLMRetryMax:            cloneIntPtr(c.Agent.LLMRetryMax),
+		LLMRetryBaseMS:         c.Agent.LLMRetryBaseMS,
+		LLMMinIntervalMS:       c.Agent.LLMMinIntervalMS,
+		LLMFirstTokenTimeoutMS: cloneIntPtr(c.Agent.LLMFirstTokenTimeoutMS),
+		LLMStreamIdleTimeoutMS: cloneIntPtr(c.Agent.LLMStreamIdleTimeoutMS),
+		LoopGuard:              cloneBoolPtr(c.Agent.LoopGuard),
+		LoopToolRepeatLimit:    cloneIntPtr(c.Agent.LoopToolRepeatLimit),
+		LoopStreamRepeatCycles: cloneIntPtr(c.Agent.LoopStreamRepeatCycles),
+		LoopNudgeMax:           cloneIntPtr(c.Agent.LoopNudgeMax),
+		WaitForLimitReset:      c.Agent.WaitForLimitReset,
+		WaitForLimitResetMaxMS: cloneIntPtr(c.Agent.WaitForLimitResetMaxMS),
+	}
+	out.Supervisor = c.Supervisor.clone()
+	out.Prompts = PromptsJSON{
+		Dir: c.Prompts.Dir, AgentPrompt: c.Prompts.AgentPrompt, PlanPrompt: c.Prompts.PlanPrompt, AskPrompt: c.Prompts.AskPrompt,
+	}
+	out.Instructions = InstructionsJSON{Files: append([]string(nil), c.Instructions.Files...)}
+	out.Skills = SkillsJSON{
+		Dirs:          append([]string(nil), c.Skills.Dirs...),
+		ProjectTrust:  c.Skills.ProjectTrust,
+		AutoDiscovery: cloneBoolPtr(c.Skills.AutoDiscovery),
+	}
+	out.Rules = RulesJSON{
+		AutoDiscover: cloneBoolPtr(c.Rules.AutoDiscover),
+		Systems:      append([]string(nil), c.Rules.Systems...),
+	}
+	out.MCP = MCPJSON{ProjectTrust: c.MCP.ResolvedProjectTrust(), IdleTimeoutSeconds: cloneIntPtr(c.MCP.IdleTimeoutSeconds)}
+	out.Tools = ToolsJSON{
+		CommandAllowlist:  append([]string(nil), c.Tools.CommandAllowlist...),
+		SSHConnectTimeout: c.Tools.SSHConnectTimeout,
+		WebSearch:         ToolWebSearchJSON(c.Tools.WebSearch),
+		OutputLimits: ToolOutputLimitsJSON{
+			Read:          cloneIntPtr(c.Tools.OutputLimits.Read),
+			Grep:          cloneIntPtr(c.Tools.OutputLimits.Grep),
+			Glob:          cloneIntPtr(c.Tools.OutputLimits.Glob),
+			PrintTree:     cloneIntPtr(c.Tools.OutputLimits.PrintTree),
+			RunCommand:    cloneIntPtr(c.Tools.OutputLimits.RunCommand),
+			SSHRunCommand: cloneIntPtr(c.Tools.OutputLimits.SSHRunCommand),
+			WebFetch:      cloneIntPtr(c.Tools.OutputLimits.WebFetch),
+			WebSearch:     cloneIntPtr(c.Tools.OutputLimits.WebSearch),
+			Default:       cloneIntPtr(c.Tools.OutputLimits.Default),
+		},
+		Background: ToolBackgroundJSON{
+			Enabled:               cloneBoolPtr(c.Tools.Background.Enabled),
+			MaxConcurrent:         c.Tools.Background.MaxConcurrent,
+			DefaultTimeoutSeconds: c.Tools.Background.DefaultTimeoutSeconds,
+			MaxTimeoutSeconds:     c.Tools.Background.MaxTimeoutSeconds,
+			OutputBufferBytes:     c.Tools.Background.OutputBufferBytes,
+		},
+		PreviewServer: ToolPreviewServerJSON{
+			Enabled:    cloneBoolPtr(c.Tools.PreviewServer.Enabled),
+			Host:       c.Tools.PreviewServer.Host,
+			PublicHost: c.Tools.PreviewServer.PublicHost,
+		},
+		Canvas: ToolCanvasJSON{
+			Enabled:        cloneBoolPtr(c.Tools.Canvas.Enabled),
+			AllowCDN:       cloneBoolPtr(c.Tools.Canvas.AllowCDN),
+			AllowedSources: append([]string(nil), c.Tools.Canvas.AllowedSources...),
+		},
+		HTTPRequest: ToolHTTPRequestJSON{
+			Allowlist:      append([]string(nil), c.Tools.HTTPRequest.Allowlist...),
+			DefaultHeaders: cloneStringMap(c.Tools.HTTPRequest.DefaultHeaders),
+		},
+	}
+	out.Logger = LoggerJSON{
+		Level: c.Logger.Level, Outputs: append([]string(nil), c.Logger.Outputs...),
+		File: c.Logger.File, Format: c.Logger.Format,
+		Rotation: LoggerRotationJSON{MaxSizeMB: c.Logger.Rotation.MaxSizeMB, MaxFiles: c.Logger.Rotation.MaxFiles},
+	}
+	for _, lv := range c.Logger.Levels {
+		out.Logger.Levels = append(out.Logger.Levels, LoggerComponentLevelJSON(lv))
+	}
+	out.Sessions = SessionsJSON{Dir: c.Sessions.Dir}
+	out.Compaction = CompactionJSON{
+		Enabled:          cloneBoolPtr(c.Compaction.Enabled),
+		AutoEnabled:      cloneBoolPtr(c.Compaction.AutoEnabled),
+		ThresholdPercent: c.Compaction.ThresholdPercent,
+		KeepRecentTurns:  cloneIntPtr(c.Compaction.KeepRecentTurns),
+		Model:            c.Compaction.Model,
+		FallbackModels:   append([]string(nil), c.Compaction.FallbackModels...),
+		ResultEviction: ResultEvictionJSON{
+			Enabled:        cloneBoolPtr(c.Compaction.ResultEviction.Enabled),
+			KeepRecent:     cloneIntPtr(c.Compaction.ResultEviction.KeepRecent),
+			MinResultBytes: cloneIntPtr(c.Compaction.ResultEviction.MinResultBytes),
+			StartPercent:   cloneIntPtr(c.Compaction.ResultEviction.StartPercent),
+		},
+	}
+	out.Memory = MemoryJSON{
+		Enabled: c.Memory.Enabled, Model: c.Memory.Model,
+		FallbackModels: append([]string(nil), c.Memory.FallbackModels...), Dir: c.Memory.Dir,
+		WaitSeconds: cloneIntPtr(c.Memory.WaitSeconds), TimeoutSeconds: c.Memory.TimeoutSeconds, KeepRuns: cloneIntPtr(c.Memory.KeepRuns),
+		RecallMaxTurns: c.Memory.RecallMaxTurns, PersistMaxTurns: c.Memory.PersistMaxTurns,
+		CopilotMaxTokens: c.Memory.CopilotMaxTokens, MaxSearchHits: c.Memory.MaxSearchHits,
+		MaxNoteChars:     cloneIntPtr(c.Memory.MaxNoteChars),
+		AdditionalPrompt: c.Memory.AdditionalPrompt, AdditionalPromptMaxChars: c.Memory.AdditionalPromptMaxChars,
+	}
+	out.Decisions = DecisionsJSON{Enabled: c.Decisions.Enabled, Model: c.Decisions.Model, Threshold: c.Decisions.Threshold}
+	out.HTTPServer = HTTPServerJSON{
+		Enabled:       c.HTTPServer.Enabled,
+		Host:          c.HTTPServer.Host,
+		Port:          c.HTTPServer.Port,
+		PublicDocs:    c.HTTPServer.PublicDocs,
+		AllowInsecure: c.HTTPServer.AllowInsecure,
+		// AuthToken is intentionally redacted; report only whether one is configured.
+		AuthConfigured: strings.TrimSpace(c.HTTPServer.AuthToken) != "",
+		Login: HTTPLoginJSON{
+			Enabled: cloneBoolPtr(c.HTTPServer.Login.Enabled),
+			Mode:    c.HTTPServer.Login.Mode,
+			User:    c.HTTPServer.Login.User,
+			// PasswordHash is redacted for the same reason the token is.
+			SessionTTLHours: c.HTTPServer.Login.SessionTTLHours,
+		},
+		// An account behind a switched-off form is not a configured sign-in:
+		// the HTTP layer overrides this with the live policy anyway, and a
+		// reader without that overlay must not be told the opposite.
+		LoginConfigured: c.HTTPServer.Login.HasAccount() && !c.HTTPServer.Login.IsExplicitlyDisabled(),
+		CORS: HTTPCORSJSON{
+			Enabled:        c.HTTPServer.CORS.Enabled,
+			AllowLoopback:  c.HTTPServer.CORS.AllowLoopback,
+			AllowedOrigins: append([]string(nil), c.HTTPServer.CORS.AllowedOrigins...),
+		},
+	}
+	for _, rm := range c.HTTPServer.Remotes {
+		out.HTTPServer.Remotes = append(out.HTTPServer.Remotes, HTTPRemoteJSON(rm))
+	}
+	out.Swarm = SwarmJSON{
+		Enabled:                  c.Swarm.Enabled,
+		Host:                     c.Swarm.Host,
+		Port:                     c.Swarm.Port,
+		Name:                     c.Swarm.Name,
+		AuthConfigured:           strings.TrimSpace(c.Swarm.AuthToken) != "",
+		PairingConfigured:        len(c.Swarm.PairingTokens),
+		AllowInsecure:            c.Swarm.AllowInsecure,
+		InsecureOpenRegistration: c.Swarm.InsecureOpenRegistration,
+		AllowPrivateUpstreams:    append([]string(nil), c.Swarm.AllowPrivateUpstreams...),
+		CORS: HTTPCORSJSON{
+			Enabled:        c.Swarm.CORS.Enabled,
+			AllowLoopback:  c.Swarm.CORS.AllowLoopback,
+			AllowedOrigins: append([]string(nil), c.Swarm.CORS.AllowedOrigins...),
+		},
+		TLS:                  SwarmTLSJSON{CertFile: c.Swarm.TLS.CertFile, KeyFile: c.Swarm.TLS.KeyFile},
+		LeaseTTLSeconds:      c.Swarm.LeaseTTLSeconds,
+		FanoutTimeoutSeconds: c.Swarm.FanoutTimeoutSeconds,
+	}
+	for _, up := range c.Swarm.Upstreams {
+		out.Swarm.Upstreams = append(out.Swarm.Upstreams, SwarmUpstreamJSON{
+			Name: up.Name, URL: up.URL, Kind: up.Kind,
+			TokenConfigured: strings.TrimSpace(up.Token) != "",
+			Dial:            swarmDialToJSON(up.Dial),
+		})
+	}
+	for _, j := range c.Swarm.Join {
+		out.Swarm.Join = append(out.Swarm.Join, SwarmJoinJSON{
+			URL: j.URL, Name: j.Name, AdvertiseURL: j.AdvertiseURL,
+			PairingTokenConfigured: strings.TrimSpace(j.PairingToken) != "",
+			TokenConfigured:        strings.TrimSpace(j.Token) != "",
+			Labels:                 cloneStringMap(j.Labels),
+			Dial:                   swarmDialToJSON(j.Dial),
+		})
+	}
+	out.Metrics = MetricsJSON{
+		Enable:          c.Metrics.Enable,
+		Host:            c.Metrics.Host,
+		Port:            c.Metrics.Port,
+		TokenConfigured: strings.TrimSpace(c.Metrics.Token) != "",
+	}
+	out.UI = UIJSON{Enabled: cloneBoolPtr(c.UI.Enabled)}
+	out.Browser = BrowserJSON{
+		Enable: c.Browser.Enable, TokenConfigured: c.Browser.Token != "",
+		ServeRemote: c.Browser.ServeRemote, Remotes: append([]string(nil), c.Browser.Remotes...),
+	}
+	out.Scheduler = SchedulerJSON{
+		Enabled: c.Scheduler.Enabled, MaxQueue: c.Scheduler.MaxQueue,
+		Timeout: c.Scheduler.Timeout, RetainSessions: c.Scheduler.RetainSessions,
+		ProjectTrust: c.Scheduler.ProjectTrust,
+	}
+	out.Subagents = SubagentsJSON{
+		Enabled:               cloneBoolPtr(c.Subagents.Enabled),
+		Dirs:                  append([]string(nil), c.Subagents.Dirs...),
+		ProjectTrust:          c.Subagents.ProjectTrust,
+		MaxConcurrent:         c.Subagents.MaxConcurrent,
+		MaxDepth:              cloneIntPtr(c.Subagents.MaxDepth),
+		DefaultTimeoutSeconds: c.Subagents.DefaultTimeoutSeconds,
+		MaxTurns:              c.Subagents.MaxTurns,
+	}
+	out.Hooks = HooksJSON{
+		Enabled:               cloneBoolPtr(c.Hooks.Enabled),
+		Files:                 append([]string(nil), c.Hooks.Files...),
+		ProjectTrust:          c.Hooks.ProjectTrust,
+		DefaultTimeoutSeconds: c.Hooks.DefaultTimeoutSeconds,
+		StopLoopLimit:         c.Hooks.StopLoopLimit,
+		MaxOutputChars:        c.Hooks.MaxOutputChars,
+	}
+	tg := c.Gateways.Telegram
+	tgJSON := TelegramGatewayJSON{
+		Enabled: tg.Enabled, Token: tg.Token, Proxy: tg.Proxy, RichMessages: tg.RichMessages,
+		Admins:           append([]int64(nil), tg.Admins...),
+		DefaultAccess:    string(tg.DefaultAccess),
+		DefaultIsolation: string(tg.DefaultIsolation),
+		MiniApp:          TelegramMiniAppJSON{URL: tg.MiniApp.URL, MenuButton: cloneBoolPtr(tg.MiniApp.MenuButton)},
+	}
+	for _, g := range tg.UserGroups {
+		tgJSON.UserGroups = append(tgJSON.UserGroups, TelegramUserGroupJSON{
+			Name: g.Name, UserIDs: append([]int64(nil), g.UserIDs...),
+		})
+	}
+	for _, ch := range tg.Chats {
+		tgJSON.Chats = append(tgJSON.Chats, TelegramChatJSON{
+			ChatID: ch.ChatID, Isolation: string(ch.Isolation), Access: string(ch.Access),
+		})
+	}
+	pc := c.Gateways.Pachca
+	pcJSON := PachcaGatewayJSON{
+		Enabled: pc.Enabled, Token: pc.Token, Proxy: pc.Proxy, PollIntervalSeconds: pc.PollIntervalSeconds,
+		Admins:           append([]int64(nil), pc.Admins...),
+		DefaultAccess:    string(pc.DefaultAccess),
+		DefaultIsolation: string(pc.DefaultIsolation),
+		UserGroups:       userGroupsToJSON(pc.UserGroups),
+		Chats:            chatsToJSON(pc.Chats),
+	}
+	mx := c.Gateways.Max
+	mxJSON := MaxGatewayJSON{
+		Enabled: mx.Enabled, Token: mx.Token, Proxy: mx.Proxy, CAFile: mx.CAFile,
+		PollTimeoutSeconds: mx.PollTimeoutSeconds, PollIntervalSeconds: mx.PollIntervalSeconds,
+		Admins:           append([]int64(nil), mx.Admins...),
+		DefaultAccess:    string(mx.DefaultAccess),
+		DefaultIsolation: string(mx.DefaultIsolation),
+		UserGroups:       userGroupsToJSON(mx.UserGroups),
+		Chats:            chatsToJSON(mx.Chats),
+	}
+	out.Gateways = GatewaysJSON{Telegram: tgJSON, Pachca: pcJSON, Max: mxJSON}
+	return out
+}
+
+// JSONDTOToConfig maps JSON DTO into a new Config (Paths must be set by caller before validate).
+func JSONDTOToConfig(j *ConfigJSON, paths Paths) *Config {
+	cfg := &Config{Paths: paths}
+	if j == nil {
+		return cfg
+	}
+	for _, p := range j.Providers {
+		pc := ProviderConfig(p)
+		pc.UsageLimitsPanel = cloneBoolPtr(p.UsageLimitsPanel)
+		// The settings form seeds every new row from the schema defaults, the
+		// acp block included: only an acp row keeps it.
+		if strings.TrimSpace(pc.Type) != "acp" {
+			pc.ACP = nil
+		}
+		cfg.Providers = append(cfg.Providers, pc)
+	}
+	for _, m := range j.Models {
+		me := ModelEntry(m)
+		me.ReasoningLevels = cloneStringsPtr(m.ReasoningLevels)
+		me.Stream = cloneBoolPtr(m.Stream)
+		cfg.Models = append(cfg.Models, me)
+	}
+	for _, ts := range j.Toolsets {
+		cfg.Toolsets = append(cfg.Toolsets, Toolset{Name: ts.Name,
+			Tools:           append([]string(nil), ts.Tools...),
+			DisallowedTools: append([]string(nil), ts.DisallowedTools...)})
+	}
+	cfg.Agent = Agent{
+		QueueMode:              j.Agent.QueueMode,
+		Model:                  j.Agent.Model,
+		LLMRetryMax:            cloneIntPtr(j.Agent.LLMRetryMax),
+		LLMRetryBaseMS:         j.Agent.LLMRetryBaseMS,
+		LLMMinIntervalMS:       j.Agent.LLMMinIntervalMS,
+		LLMFirstTokenTimeoutMS: cloneIntPtr(j.Agent.LLMFirstTokenTimeoutMS),
+		LLMStreamIdleTimeoutMS: cloneIntPtr(j.Agent.LLMStreamIdleTimeoutMS),
+		LoopGuard:              cloneBoolPtr(j.Agent.LoopGuard),
+		LoopToolRepeatLimit:    cloneIntPtr(j.Agent.LoopToolRepeatLimit),
+		LoopStreamRepeatCycles: cloneIntPtr(j.Agent.LoopStreamRepeatCycles),
+		LoopNudgeMax:           cloneIntPtr(j.Agent.LoopNudgeMax),
+		WaitForLimitReset:      j.Agent.WaitForLimitReset,
+		WaitForLimitResetMaxMS: cloneIntPtr(j.Agent.WaitForLimitResetMaxMS),
+	}
+	cfg.Supervisor = j.Supervisor.clone()
+	if j.Agent.MaxTurns != nil {
+		cfg.Agent.MaxTurns = *j.Agent.MaxTurns
+		cfg.Agent.maxTurnsSet = true
+	}
+	cfg.Prompts = Prompts{
+		Dir: j.Prompts.Dir, AgentPrompt: j.Prompts.AgentPrompt, PlanPrompt: j.Prompts.PlanPrompt, AskPrompt: j.Prompts.AskPrompt,
+	}
+	cfg.Instructions = Instructions{Files: append([]string(nil), j.Instructions.Files...)}
+	cfg.Skills = Skills{
+		Dirs:          append([]string(nil), j.Skills.Dirs...),
+		ProjectTrust:  j.Skills.ProjectTrust,
+		AutoDiscovery: cloneBoolPtr(j.Skills.AutoDiscovery),
+	}
+	cfg.Rules = Rules{
+		AutoDiscover: cloneBoolPtr(j.Rules.AutoDiscover),
+		Systems:      append([]string(nil), j.Rules.Systems...),
+	}
+	cfg.MCP = MCP{ProjectTrust: j.MCP.ProjectTrust, IdleTimeoutSeconds: cloneIntPtr(j.MCP.IdleTimeoutSeconds)}
+	cfg.Tools = Tools{
+		CommandAllowlist:  append([]string(nil), j.Tools.CommandAllowlist...),
+		SSHConnectTimeout: j.Tools.SSHConnectTimeout,
+		WebSearch:         ToolWebSearch(j.Tools.WebSearch),
+		OutputLimits: ToolOutputLimits{
+			Read:          cloneIntPtr(j.Tools.OutputLimits.Read),
+			Grep:          cloneIntPtr(j.Tools.OutputLimits.Grep),
+			Glob:          cloneIntPtr(j.Tools.OutputLimits.Glob),
+			PrintTree:     cloneIntPtr(j.Tools.OutputLimits.PrintTree),
+			RunCommand:    cloneIntPtr(j.Tools.OutputLimits.RunCommand),
+			SSHRunCommand: cloneIntPtr(j.Tools.OutputLimits.SSHRunCommand),
+			WebFetch:      cloneIntPtr(j.Tools.OutputLimits.WebFetch),
+			WebSearch:     cloneIntPtr(j.Tools.OutputLimits.WebSearch),
+			Default:       cloneIntPtr(j.Tools.OutputLimits.Default),
+		},
+		Background: ToolBackground{
+			Enabled:               cloneBoolPtr(j.Tools.Background.Enabled),
+			MaxConcurrent:         j.Tools.Background.MaxConcurrent,
+			DefaultTimeoutSeconds: j.Tools.Background.DefaultTimeoutSeconds,
+			MaxTimeoutSeconds:     j.Tools.Background.MaxTimeoutSeconds,
+			OutputBufferBytes:     j.Tools.Background.OutputBufferBytes,
+		},
+		PreviewServer: ToolPreviewServer{
+			Enabled:    cloneBoolPtr(j.Tools.PreviewServer.Enabled),
+			Host:       j.Tools.PreviewServer.Host,
+			PublicHost: j.Tools.PreviewServer.PublicHost,
+		},
+		Canvas: ToolCanvas{
+			Enabled:        cloneBoolPtr(j.Tools.Canvas.Enabled),
+			AllowCDN:       cloneBoolPtr(j.Tools.Canvas.AllowCDN),
+			AllowedSources: append([]string(nil), j.Tools.Canvas.AllowedSources...),
+		},
+		HTTPRequest: ToolHTTPRequest{
+			Allowlist:      append([]string(nil), j.Tools.HTTPRequest.Allowlist...),
+			DefaultHeaders: cloneStringMap(j.Tools.HTTPRequest.DefaultHeaders),
+		},
+	}
+	cfg.Logger = Logger{
+		Level: j.Logger.Level, Outputs: append([]string(nil), j.Logger.Outputs...),
+		File: j.Logger.File, Format: j.Logger.Format,
+		Rotation: LoggerRotation{
+			MaxSizeMB: j.Logger.Rotation.MaxSizeMB, MaxFiles: j.Logger.Rotation.MaxFiles,
+		},
+	}
+	for _, lv := range j.Logger.Levels {
+		cfg.Logger.Levels = append(cfg.Logger.Levels, LoggerComponentLevel(lv))
+	}
+	cfg.Sessions = Sessions{Dir: j.Sessions.Dir}
+	cfg.Compaction = Compaction{
+		Enabled:          cloneBoolPtr(j.Compaction.Enabled),
+		AutoEnabled:      cloneBoolPtr(j.Compaction.AutoEnabled),
+		ThresholdPercent: j.Compaction.ThresholdPercent,
+		KeepRecentTurns:  cloneIntPtr(j.Compaction.KeepRecentTurns),
+		Model:            j.Compaction.Model,
+		FallbackModels:   append([]string(nil), j.Compaction.FallbackModels...),
+		ResultEviction: ResultEviction{
+			Enabled:        cloneBoolPtr(j.Compaction.ResultEviction.Enabled),
+			KeepRecent:     cloneIntPtr(j.Compaction.ResultEviction.KeepRecent),
+			MinResultBytes: cloneIntPtr(j.Compaction.ResultEviction.MinResultBytes),
+			StartPercent:   cloneIntPtr(j.Compaction.ResultEviction.StartPercent),
+		},
+	}
+	cfg.Memory = MemoryConfig{
+		Enabled: j.Memory.Enabled, Model: j.Memory.Model,
+		FallbackModels: append([]string(nil), j.Memory.FallbackModels...), Dir: j.Memory.Dir,
+		WaitSeconds: cloneIntPtr(j.Memory.WaitSeconds), TimeoutSeconds: j.Memory.TimeoutSeconds, KeepRuns: cloneIntPtr(j.Memory.KeepRuns),
+		RecallMaxTurns: j.Memory.RecallMaxTurns, PersistMaxTurns: j.Memory.PersistMaxTurns,
+		CopilotMaxTokens: j.Memory.CopilotMaxTokens, MaxSearchHits: j.Memory.MaxSearchHits,
+		MaxNoteChars:     cloneIntPtr(j.Memory.MaxNoteChars),
+		AdditionalPrompt: j.Memory.AdditionalPrompt, AdditionalPromptMaxChars: j.Memory.AdditionalPromptMaxChars,
+	}
+	cfg.Decisions = DecisionsConfig{Enabled: j.Decisions.Enabled, Model: j.Decisions.Model, Threshold: j.Decisions.Threshold}
+	cfg.HTTPServer = HTTPServerConfig{
+		Enabled:   j.HTTPServer.Enabled,
+		Host:      j.HTTPServer.Host,
+		Port:      j.HTTPServer.Port,
+		AuthToken: j.HTTPServer.AuthToken,
+		Login: HTTPLoginConfig{
+			Enabled:         cloneBoolPtr(j.HTTPServer.Login.Enabled),
+			Mode:            j.HTTPServer.Login.Mode,
+			User:            j.HTTPServer.Login.User,
+			PasswordHash:    j.HTTPServer.Login.PasswordHash,
+			SessionTTLHours: j.HTTPServer.Login.SessionTTLHours,
+		},
+		PublicDocs:    j.HTTPServer.PublicDocs,
+		AllowInsecure: j.HTTPServer.AllowInsecure,
+		CORS: HTTPCORSConfig{
+			Enabled:        j.HTTPServer.CORS.Enabled,
+			AllowLoopback:  j.HTTPServer.CORS.AllowLoopback,
+			AllowedOrigins: append([]string(nil), j.HTTPServer.CORS.AllowedOrigins...),
+		},
+	}
+	for _, rm := range j.HTTPServer.Remotes {
+		cfg.HTTPServer.Remotes = append(cfg.HTTPServer.Remotes, HTTPRemote(rm))
+	}
+	cfg.Swarm = SwarmConfig{
+		Enabled:                  j.Swarm.Enabled,
+		Host:                     j.Swarm.Host,
+		Port:                     j.Swarm.Port,
+		Name:                     j.Swarm.Name,
+		AuthToken:                j.Swarm.AuthToken,
+		PairingTokens:            append([]string(nil), j.Swarm.PairingTokens...),
+		AllowInsecure:            j.Swarm.AllowInsecure,
+		InsecureOpenRegistration: j.Swarm.InsecureOpenRegistration,
+		AllowPrivateUpstreams:    append([]string(nil), j.Swarm.AllowPrivateUpstreams...),
+		CORS: HTTPCORSConfig{
+			Enabled:        j.Swarm.CORS.Enabled,
+			AllowLoopback:  j.Swarm.CORS.AllowLoopback,
+			AllowedOrigins: append([]string(nil), j.Swarm.CORS.AllowedOrigins...),
+		},
+		TLS:                  SwarmTLSConfig{CertFile: j.Swarm.TLS.CertFile, KeyFile: j.Swarm.TLS.KeyFile},
+		LeaseTTLSeconds:      j.Swarm.LeaseTTLSeconds,
+		FanoutTimeoutSeconds: j.Swarm.FanoutTimeoutSeconds,
+	}
+	for _, up := range j.Swarm.Upstreams {
+		cfg.Swarm.Upstreams = append(cfg.Swarm.Upstreams, SwarmUpstream{
+			Name: up.Name, URL: up.URL, Kind: up.Kind, Token: up.Token,
+			Dial: swarmDialFromJSON(up.Dial),
+		})
+	}
+	for _, jn := range j.Swarm.Join {
+		cfg.Swarm.Join = append(cfg.Swarm.Join, SwarmJoin{
+			URL: jn.URL, Name: jn.Name, PairingToken: jn.PairingToken,
+			AdvertiseURL: jn.AdvertiseURL, Token: jn.Token,
+			Labels: cloneStringMap(jn.Labels),
+			Dial:   swarmDialFromJSON(jn.Dial),
+		})
+	}
+	cfg.Metrics = MetricsConfig{
+		Enable: j.Metrics.Enable,
+		Host:   j.Metrics.Host,
+		Port:   j.Metrics.Port,
+		Token:  j.Metrics.Token,
+	}
+	cfg.UI = UIConfig{Enabled: cloneBoolPtr(j.UI.Enabled)}
+	cfg.Browser = BrowserConfig{
+		Enable: j.Browser.Enable, Token: j.Browser.Token,
+		ServeRemote: j.Browser.ServeRemote, Remotes: append([]string(nil), j.Browser.Remotes...),
+	}
+	cfg.Scheduler = SchedulerConfig{
+		Enabled: j.Scheduler.Enabled, MaxQueue: j.Scheduler.MaxQueue,
+		Timeout: j.Scheduler.Timeout, RetainSessions: j.Scheduler.RetainSessions,
+		ProjectTrust: j.Scheduler.ProjectTrust,
+	}
+	cfg.Subagents = Subagents{
+		Enabled:               cloneBoolPtr(j.Subagents.Enabled),
+		Dirs:                  append([]string(nil), j.Subagents.Dirs...),
+		ProjectTrust:          j.Subagents.ProjectTrust,
+		MaxConcurrent:         j.Subagents.MaxConcurrent,
+		MaxDepth:              cloneIntPtr(j.Subagents.MaxDepth),
+		DefaultTimeoutSeconds: j.Subagents.DefaultTimeoutSeconds,
+		MaxTurns:              j.Subagents.MaxTurns,
+	}
+	cfg.Hooks = Hooks{
+		Enabled:               cloneBoolPtr(j.Hooks.Enabled),
+		Files:                 append([]string(nil), j.Hooks.Files...),
+		ProjectTrust:          j.Hooks.ProjectTrust,
+		DefaultTimeoutSeconds: j.Hooks.DefaultTimeoutSeconds,
+		StopLoopLimit:         j.Hooks.StopLoopLimit,
+		MaxOutputChars:        j.Hooks.MaxOutputChars,
+	}
+	jt := j.Gateways.Telegram
+	tg := TelegramGatewayConfig{
+		Enabled: jt.Enabled, Token: jt.Token, Proxy: jt.Proxy, RichMessages: jt.RichMessages,
+		Admins:           append([]int64(nil), jt.Admins...),
+		DefaultAccess:    AccessLevel(jt.DefaultAccess),
+		DefaultIsolation: IsolationMode(jt.DefaultIsolation),
+		MiniApp:          TelegramMiniAppConfig{URL: jt.MiniApp.URL, MenuButton: cloneBoolPtr(jt.MiniApp.MenuButton)},
+	}
+	for _, g := range jt.UserGroups {
+		tg.UserGroups = append(tg.UserGroups, TelegramUserGroup{
+			Name: g.Name, UserIDs: append([]int64(nil), g.UserIDs...),
+		})
+	}
+	for _, ch := range jt.Chats {
+		tg.Chats = append(tg.Chats, TelegramChatConfig{
+			ChatID: ch.ChatID, Isolation: IsolationMode(ch.Isolation), Access: AccessLevel(ch.Access),
+		})
+	}
+	jp := j.Gateways.Pachca
+	pc := PachcaGatewayConfig{
+		Enabled: jp.Enabled, Token: jp.Token, Proxy: jp.Proxy, PollIntervalSeconds: jp.PollIntervalSeconds,
+		Admins:           append([]int64(nil), jp.Admins...),
+		DefaultAccess:    AccessLevel(jp.DefaultAccess),
+		DefaultIsolation: IsolationMode(jp.DefaultIsolation),
+		UserGroups:       userGroupsFromJSON(jp.UserGroups),
+		Chats:            chatsFromJSON(jp.Chats),
+	}
+	jm := j.Gateways.Max
+	mx := MaxGatewayConfig{
+		Enabled: jm.Enabled, Token: jm.Token, Proxy: jm.Proxy, CAFile: jm.CAFile,
+		PollTimeoutSeconds: jm.PollTimeoutSeconds, PollIntervalSeconds: jm.PollIntervalSeconds,
+		Admins:           append([]int64(nil), jm.Admins...),
+		DefaultAccess:    AccessLevel(jm.DefaultAccess),
+		DefaultIsolation: IsolationMode(jm.DefaultIsolation),
+		UserGroups:       userGroupsFromJSON(jm.UserGroups),
+		Chats:            chatsFromJSON(jm.Chats),
+	}
+	cfg.Gateways = GatewayConfig{Telegram: tg, Pachca: pc, Max: mx}
+	return cfg
+}
+
+func userGroupsToJSON(groups []GatewayUserGroup) []TelegramUserGroupJSON {
+	var out []TelegramUserGroupJSON
+	for _, g := range groups {
+		out = append(out, TelegramUserGroupJSON{Name: g.Name, UserIDs: append([]int64(nil), g.UserIDs...)})
+	}
+	return out
+}
+
+func chatsToJSON(chats []GatewayChatConfig) []TelegramChatJSON {
+	var out []TelegramChatJSON
+	for _, ch := range chats {
+		out = append(out, TelegramChatJSON{ChatID: ch.ChatID, Isolation: string(ch.Isolation), Access: string(ch.Access)})
+	}
+	return out
+}
+
+func userGroupsFromJSON(groups []TelegramUserGroupJSON) []GatewayUserGroup {
+	var out []GatewayUserGroup
+	for _, g := range groups {
+		out = append(out, GatewayUserGroup{Name: g.Name, UserIDs: append([]int64(nil), g.UserIDs...)})
+	}
+	return out
+}
+
+func chatsFromJSON(chats []TelegramChatJSON) []GatewayChatConfig {
+	var out []GatewayChatConfig
+	for _, ch := range chats {
+		out = append(out, GatewayChatConfig{ChatID: ch.ChatID, Isolation: IsolationMode(ch.Isolation), Access: AccessLevel(ch.Access)})
+	}
+	return out
+}
+
+func cloneBoolPtr(p *bool) *bool {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// cloneStringsPtr copies a *[]string, keeping nil (key omitted) and a pointer
+// to an empty list (explicit []) apart.
+func cloneStringsPtr(p *[]string) *[]string {
+	if p == nil {
+		return nil
+	}
+	out := make([]string, len(*p))
+	copy(out, *p)
+	return &out
+}
+
+func cloneIntPtr(p *int) *int {
+	if p == nil {
+		return nil
+	}
+	v := *p
+	return &v
+}
+
+// ParseAndValidateConfigJSON unmarshals JSON into ConfigJSON, maps to Config, applies defaults and validates.
+func ParseAndValidateConfigJSON(data []byte, paths Paths) (*Config, error) {
+	return ParseConfigJSONPreservingSecrets(data, paths, nil)
+}
+
+// ParseConfigJSONPreservingSecrets is like ParseAndValidateConfigJSON but, when current is
+// non-nil, carries write-only secrets that GET /coddy/config redacts (currently the
+// httpserver auth tokens) from current into the incoming config when the payload omitted them.
+// This lets the UI save an edited, redacted config without wiping tokens it never received.
+func ParseConfigJSONPreservingSecrets(data []byte, paths Paths, current *Config) (*Config, error) {
+	var j ConfigJSON
+	if err := json.Unmarshal(data, &j); err != nil {
+		return nil, fmt.Errorf("json: %w", err)
+	}
+	cfg := JSONDTOToConfig(&j, paths)
+	preserveRedactedSecrets(cfg, current)
+	applyDefaults(cfg)
+	if err := validateSubconfigs(cfg); err != nil {
+		return nil, err
+	}
+	return cfg, nil
+}
+
+// preserveRedactedSecrets copies redacted, write-only secrets from current into next when next
+// left them empty. GET /coddy/config never returns these, so a plain round-trip would drop them.
+func preserveRedactedSecrets(next, current *Config) {
+	if next == nil || current == nil {
+		return
+	}
+	if strings.TrimSpace(next.HTTPServer.AuthToken) == "" && strings.TrimSpace(current.HTTPServer.AuthToken) != "" {
+		next.HTTPServer.AuthToken = current.HTTPServer.AuthToken
+	}
+	// The password hash is write-only like the token, so a settings screen that
+	// read the config and saved it back would otherwise remove the account and
+	// lock the operator out of the page they were saving from.
+	if strings.TrimSpace(next.HTTPServer.Login.PasswordHash) == "" && strings.TrimSpace(current.HTTPServer.Login.PasswordHash) != "" {
+		next.HTTPServer.Login.PasswordHash = current.HTTPServer.Login.PasswordHash
+	}
+	preserveSwarmSecrets(&next.Swarm, &current.Swarm)
+	if strings.TrimSpace(next.Browser.Token) == "" {
+		next.Browser.Token = current.Browser.Token
+	}
+	if strings.TrimSpace(next.Metrics.Token) == "" && strings.TrimSpace(current.Metrics.Token) != "" {
+		next.Metrics.Token = current.Metrics.Token
+	}
+}
+
+// preserveSwarmSecrets carries a relay's credentials across a save.
+//
+// Every one of them is write-only, so a client that reads the config and writes
+// it back sends them empty. Without this a single save from the settings screen
+// would strip the relay's client token, its pairing tokens, and every node's
+// credential - leaving a relay that refuses its own fleet.
+func preserveSwarmSecrets(next, current *SwarmConfig) {
+	if next == nil || current == nil {
+		return
+	}
+	if strings.TrimSpace(next.AuthToken) == "" && strings.TrimSpace(current.AuthToken) != "" {
+		next.AuthToken = current.AuthToken
+	}
+	if len(next.PairingTokens) == 0 && len(current.PairingTokens) > 0 {
+		next.PairingTokens = append([]string(nil), current.PairingTokens...)
+	}
+	// A credential belongs to a destination, not to a label. Renaming an entry
+	// must keep its token; pointing it somewhere new must not carry the token
+	// along. So the address is the key, and the name only disambiguates when
+	// two entries share one.
+	prevUpstream := indexByDestination(current.Upstreams,
+		func(u SwarmUpstream) (string, string) { return u.URL, u.Name })
+	for i := range next.Upstreams {
+		old, ok := prevUpstream.lookup(next.Upstreams[i].URL, next.Upstreams[i].Name)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(next.Upstreams[i].Token) == "" {
+			next.Upstreams[i].Token = old.Token
+		}
+		if strings.TrimSpace(next.Upstreams[i].Dial.Proxy) == "" {
+			next.Upstreams[i].Dial.Proxy = old.Dial.Proxy
+		}
+	}
+	prevJoin := indexByDestination(current.Join,
+		func(j SwarmJoin) (string, string) { return j.URL, j.Name })
+	for i := range next.Join {
+		old, ok := prevJoin.lookup(next.Join[i].URL, next.Join[i].Name)
+		if !ok {
+			continue
+		}
+		if strings.TrimSpace(next.Join[i].PairingToken) == "" {
+			next.Join[i].PairingToken = old.PairingToken
+		}
+		if strings.TrimSpace(next.Join[i].Token) == "" {
+			next.Join[i].Token = old.Token
+		}
+		if strings.TrimSpace(next.Join[i].Dial.Proxy) == "" {
+			next.Join[i].Dial.Proxy = old.Dial.Proxy
+		}
+	}
+}
+
+// escapeYAMLSecrets returns a copy of cfg with literal credentials "$"-escaped for disk.
+// It copies each collection it mutates, leaving the caller's live values untouched.
+func escapeYAMLSecrets(cfg *Config) *Config {
+	out := *cfg
+	if len(cfg.Providers) > 0 {
+		out.Providers = make([]ProviderConfig, len(cfg.Providers))
+		copy(out.Providers, cfg.Providers)
+		for i := range out.Providers {
+			out.Providers[i].APIKey = escapeYAMLDollar(out.Providers[i].APIKey)
+			out.Providers[i].Proxy = escapeYAMLDollar(out.Providers[i].Proxy)
+		}
+	}
+	out.Gateways.Telegram.Token = escapeYAMLDollar(cfg.Gateways.Telegram.Token)
+	out.Gateways.Telegram.Proxy = escapeYAMLDollar(cfg.Gateways.Telegram.Proxy)
+	out.Gateways.Pachca.Token = escapeYAMLDollar(cfg.Gateways.Pachca.Token)
+	out.Gateways.Pachca.Proxy = escapeYAMLDollar(cfg.Gateways.Pachca.Proxy)
+	out.Gateways.Max.Proxy = escapeYAMLDollar(cfg.Gateways.Max.Proxy)
+	out.HTTPServer.AuthToken = escapeYAMLDollar(cfg.HTTPServer.AuthToken)
+	if len(cfg.HTTPServer.Remotes) > 0 {
+		out.HTTPServer.Remotes = append([]HTTPRemote(nil), cfg.HTTPServer.Remotes...)
+		for i := range out.HTTPServer.Remotes {
+			out.HTTPServer.Remotes[i].Token = escapeYAMLDollar(out.HTTPServer.Remotes[i].Token)
+		}
+	}
+	// An argon2id hash is "$argon2id$v=19$m=...", which the load-time expansion
+	// would otherwise read as a row of empty environment references and hand
+	// back as rubble. Doubling the signs here is what makes the hash a literal,
+	// and it is why `coddy serve set-password` exists rather than a line an
+	// operator types into the file by hand.
+	out.HTTPServer.Login.PasswordHash = escapeYAMLDollar(cfg.HTTPServer.Login.PasswordHash)
+	// Settings accept a literal extension key, including dollar signs.
+	out.Browser.Token = escapeYAMLDollar(cfg.Browser.Token)
+	out.Metrics.Token = escapeYAMLDollar(cfg.Metrics.Token)
+	out.Swarm.AuthToken = escapeYAMLDollar(cfg.Swarm.AuthToken)
+	if len(cfg.Swarm.PairingTokens) > 0 {
+		out.Swarm.PairingTokens = append([]string(nil), cfg.Swarm.PairingTokens...)
+		for i := range out.Swarm.PairingTokens {
+			out.Swarm.PairingTokens[i] = escapeYAMLDollar(out.Swarm.PairingTokens[i])
+		}
+	}
+	out.Tools.WebSearch.BraveAPIKey = escapeYAMLDollar(cfg.Tools.WebSearch.BraveAPIKey)
+	if len(cfg.Tools.HTTPRequest.DefaultHeaders) > 0 {
+		out.Tools.HTTPRequest.DefaultHeaders = cloneStringMap(cfg.Tools.HTTPRequest.DefaultHeaders)
+		for name, value := range out.Tools.HTTPRequest.DefaultHeaders {
+			out.Tools.HTTPRequest.DefaultHeaders[name] = escapeYAMLDollar(value)
+		}
+	}
+	// A swarm proxy URL carries credentials just as a provider's does, so a "$"
+	// in a password would otherwise be read as an environment reference on the
+	// next load and silently expand to nothing.
+	//
+	// The slices are copied before they are touched: `out` is a shallow copy, so
+	// editing an element in place would escape the caller's live config too.
+	if len(cfg.Swarm.Upstreams) > 0 {
+		out.Swarm.Upstreams = make([]SwarmUpstream, len(cfg.Swarm.Upstreams))
+		copy(out.Swarm.Upstreams, cfg.Swarm.Upstreams)
+		for i := range out.Swarm.Upstreams {
+			out.Swarm.Upstreams[i].Token = escapeYAMLDollar(out.Swarm.Upstreams[i].Token)
+			out.Swarm.Upstreams[i].Dial.Proxy = escapeYAMLDollar(out.Swarm.Upstreams[i].Dial.Proxy)
+		}
+	}
+	if len(cfg.Swarm.Join) > 0 {
+		out.Swarm.Join = make([]SwarmJoin, len(cfg.Swarm.Join))
+		copy(out.Swarm.Join, cfg.Swarm.Join)
+		for i := range out.Swarm.Join {
+			out.Swarm.Join[i].PairingToken = escapeYAMLDollar(out.Swarm.Join[i].PairingToken)
+			out.Swarm.Join[i].Token = escapeYAMLDollar(out.Swarm.Join[i].Token)
+			out.Swarm.Join[i].Dial.Proxy = escapeYAMLDollar(out.Swarm.Join[i].Dial.Proxy)
+		}
+	}
+	return &out
+}
+
+func swarmDialToJSON(d SwarmDialConfig) SwarmDialJSON {
+	return SwarmDialJSON{
+		// A proxy URL can carry credentials, so it is reported as present
+		// rather than echoed back.
+		ProxyConfigured:    strings.TrimSpace(d.Proxy) != "",
+		CAFile:             d.CAFile,
+		InsecureSkipVerify: d.InsecureSkipVerify,
+	}
+}
+
+func swarmDialFromJSON(d SwarmDialJSON) SwarmDialConfig {
+	return SwarmDialConfig{
+		Proxy:              d.Proxy,
+		CAFile:             d.CAFile,
+		InsecureSkipVerify: d.InsecureSkipVerify,
+	}
+}
+
+func cloneStringMap(m map[string]string) map[string]string {
+	if len(m) == 0 {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, v := range m {
+		out[k] = v
+	}
+	return out
+}
+
+// destinationIndex finds a previous entry by the address it points at, falling
+// back to the name only to tell apart two entries sharing one address.
+type destinationIndex[T any] struct {
+	byAddr     map[string][]T
+	byAddrName map[string]T
+}
+
+func canonicalDestination(url string) string {
+	return strings.TrimRight(strings.TrimSpace(url), "/")
+}
+
+func indexByDestination[T any](items []T, key func(T) (addr string, name string)) destinationIndex[T] {
+	idx := destinationIndex[T]{
+		byAddr:     map[string][]T{},
+		byAddrName: map[string]T{},
+	}
+	for _, item := range items {
+		addr, name := key(item)
+		addr = canonicalDestination(addr)
+		idx.byAddr[addr] = append(idx.byAddr[addr], item)
+		idx.byAddrName[addr+"\x00"+strings.TrimSpace(name)] = item
+	}
+	return idx
+}
+
+func (i destinationIndex[T]) lookup(addr, name string) (T, bool) {
+	var zero T
+	addr = canonicalDestination(addr)
+	if exact, ok := i.byAddrName[addr+"\x00"+strings.TrimSpace(name)]; ok {
+		return exact, true
+	}
+	// A rename: same destination, different label. Safe as long as only one
+	// entry pointed there.
+	if only := i.byAddr[addr]; len(only) == 1 {
+		return only[0], true
+	}
+	return zero, false
+}

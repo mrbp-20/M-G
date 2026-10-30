@@ -1,0 +1,560 @@
+.PHONY: build build-acp android check-android ui-deps ui-build ui-test ui-typecheck ui-format-check fmt-check test test-matrix test-race test-cache test-perf bench-cli-startup bench-cli-startup-real print-test-tag-sets print-full-tags print-lint-tags-no-ui test-agent-rules test-opencode-rules check-windows lint lint-windows clean install print-version print-revision hooks deb rpm brew brew-cask-check brew-publish brew-formula brew-check check-image site-schema site-schema-check models-catalog models-catalog-check docs docs-check diagrams docs-stamp docs-changelog docs-fast site-docs site-docs-check skills-vendor skills-vendor-check security sec-trivy sec-semgrep sec-govulncheck sec-report
+
+# ---- Build options (extend when you add optional Go build tags) ----
+#   TAGS   optional extra `go build -tags` values (space-separated).
+#     Recommended full binary: make build TAGS="http ui scheduler memory cli gateway swarm metrics browser"
+#     http     OpenAI-compatible gateway and web UI (coddy serve)
+#     ui       embedded SPA for GET / (combine with http); runs npm ui-build first
+#     scheduler       cron scheduler daemon and tools (see external/scheduler/)
+#     memory          long-term memory copilot and /coddy memory REST (see external/memory/)
+#     gateway.telegram  Telegram bot gateway only (coddy serve; see external/gateway/)
+#     gateway.pachca  Pachca bot gateway only (coddy serve; see external/gateway/pachca/)
+#     gateway.max     MAX bot gateway only (coddy serve; see external/gateway/max/)
+#     gateway         all messenger gateways: Telegram, Pachca and MAX (superset of all of them)
+#     cli      interactive console TUI (bare `coddy` on a terminal; see external/cli/)
+#     swarm    stateless relay that aggregates nodes (coddy serve; see external/swarm/)
+#     metrics  Prometheus exporter, off by default (coddy serve; see external/metrics/)
+#   Examples: make build TAGS=http
+#             make build TAGS="http ui"
+#             make build TAGS="http scheduler"
+#             make build TAGS="http ui scheduler memory"
+#             make build TAGS="gateway.telegram"
+#             make build TAGS="gateway metrics"
+#             make build TAGS="http ui scheduler memory cli gateway swarm metrics browser"
+#   Omit memory (or other tags) for a slimmer binary; runtime memory.enable only applies when built with memory.
+#   VERSION / REVISION / LDFLAGS   embedded version string and commit (see print-version, print-revision).
+
+# Prefer a tag that points at HEAD (semantically latest if several), else nearest tag from history,
+# else abbreviated commit (only if this is a git checkout), else "dev".
+VERSION := $(shell \
+	point=$$(git tag -l --points-at HEAD --sort=-v:refname 2>/dev/null | head -n1); \
+	if [ -n "$$point" ]; then echo $$point; \
+	elif desc=$$(git describe --tags --dirty 2>/dev/null); then echo $$desc; \
+	elif desc=$$(git describe --tags --always --dirty 2>/dev/null); then echo $$desc; \
+	else echo dev; fi)
+# The commit HEAD points at, passed to the binary the way the version is: Go 1.26
+# and earlier stamp their own vcs.revision from the nearest .git *directory*, so
+# with such a toolchain a worktree (whose .git is a file) nested in another
+# checkout would report the enclosing checkout's commit. Empty outside git and
+# before the first commit (--verify: a bare rev-parse prints the word HEAD
+# there); the binary then keeps vcs.revision.
+REVISION := $(shell git rev-parse --verify -q HEAD 2>/dev/null)
+LDFLAGS := -X github.com/EvilFreelancer/coddy-agent/internal/version.Version=$(VERSION) -X github.com/EvilFreelancer/coddy-agent/internal/version.Revision=$(REVISION)
+
+TAGS ?=
+BUILD_DIR := build
+GOEXE := $(shell go env GOEXE)
+BINARY := $(BUILD_DIR)/coddy$(GOEXE)
+
+# Default tag set for `make install` when build/coddy is missing (matches Docker BUILD_TAGS).
+FULL_TAGS := http ui scheduler memory cli gateway swarm metrics browser
+
+# Plain `make` must run `build`. Without this, the first rule would be `print-version`.
+.DEFAULT_GOAL := build
+
+ifneq ($(strip $(TAGS)),)
+GO_TAGS_FLAG := -tags "$(strip $(TAGS))"
+endif
+
+# Embedded UI (go:embed) is included only with both http and ui tags.
+ifneq ($(and $(findstring http,$(TAGS)),$(findstring ui,$(TAGS))),)
+build: ui-build
+endif
+
+# Run npm from inside external/ui (cd + &&) rather than `npm --prefix`: some npm
+# builds (notably on Windows) resolve `--prefix` for the install target but still
+# read package.json from the cwd, failing with ENOENT on the repo root.
+ui-deps:
+	cd external/ui && npm install --no-fund --no-audit
+
+ui-build: ui-deps
+	cd external/ui && npm run build:go
+
+# The SPA's own vitest suite, part of `make test`.
+ui-test: ui-deps
+	cd external/ui && npm test
+
+# The TypeScript compiler over the SPA sources, no emit: the type gate of
+# `make lint`. vite only transpiles, so a type error ships unless this runs.
+ui-typecheck: ui-deps
+	cd external/ui && npm run typecheck
+
+# Prettier over the whole SPA at its defaults, external/ui/.prettierignore
+# keeping the build output and the vendored grammars out: the format gate of
+# the pre-commit hook and of CI's Lint job. `npm run fmt` in external/ui fixes
+# what it reports.
+ui-format-check: ui-deps
+	cd external/ui && npm run format:check
+
+# Build the coddy CLI (skills commands + ACP entrypoint; optional modules via TAGS).
+build:
+	@mkdir -p $(BUILD_DIR)
+	go build $(GO_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(BINARY) ./cmd/coddy/
+
+# ---- Android (Termux) ----
+#
+# The Android build is linked with cgo by the NDK against Bionic, for arm64 and
+# x86_64: a position-independent executable naming the Android system linker
+# as its interpreter, which is the one shape Termux can start where it runs
+# programs as `/system/bin/linker64 <path>` (Android 10 and later for a Termux
+# that targets them, the Google Play build). The static GOOS=linux binary is
+# refused there with `has unexpected e_type: 2`. Bionic gives the binary the
+# system's resolver and its own arguments; a build without cgo gets neither,
+# and internal/platform/android_nocgo.go stops it. scripts/android-cc.sh finds
+# the NDK (ANDROID_NDK_HOME, or the newest one in the SDK). TAGS works as for
+# `build`. See docs/getting-started/android.md.
+ANDROID_ARCHS ?= arm64 amd64
+
+ifneq ($(and $(findstring http,$(TAGS)),$(findstring ui,$(TAGS))),)
+android: ui-build
+endif
+
+android:
+	@mkdir -p $(BUILD_DIR)
+	@set -e; for arch in $(ANDROID_ARCHS); do \
+		cc=$$(scripts/android-cc.sh $$arch); \
+		echo "GOOS=android GOARCH=$$arch CGO_ENABLED=1 CC=$$cc go build -o $(BUILD_DIR)/coddy-android-$$arch"; \
+		GOOS=android GOARCH=$$arch CGO_ENABLED=1 CC=$$cc go build $(GO_TAGS_FLAG) -ldflags "$(LDFLAGS)" -o $(BUILD_DIR)/coddy-android-$$arch ./cmd/coddy/; \
+	done
+
+# Print the same version string embedded by `make build` (for manual go build -ldflags).
+print-version:
+	@echo $(VERSION)
+
+# Print the commit `make build` names as the binary's revision (empty outside git).
+print-revision:
+	@echo $(REVISION)
+
+# Install binary: /usr/local/bin for root, ~/.local/bin for regular users.
+INSTALL_DIR := $(if $(filter 0,$(shell id -u)),/usr/local/bin,$(HOME)/.local/bin)
+MAN_DIR := $(if $(filter 0,$(shell id -u)),/usr/local/share/man/man1,$(HOME)/.local/share/man/man1)
+
+# Install build/coddy onto PATH. Reuses an existing binary; builds FULL_TAGS only when missing.
+# The man page goes with it, so `man coddy` works for a from-source install too;
+# `make packages` is the same page, compressed, inside the deb and rpm.
+install:
+	@mkdir -p $(INSTALL_DIR) $(MAN_DIR)
+	@if [ ! -f $(BINARY) ]; then \
+		echo "No $(BINARY); building with TAGS=\"$(FULL_TAGS)\""; \
+		$(MAKE) build TAGS="$(FULL_TAGS)"; \
+	else \
+		echo "Installing existing $(BINARY)"; \
+	fi
+	cp $(BINARY) $(INSTALL_DIR)/coddy$(GOEXE)
+	cp packaging/man/coddy.1 $(MAN_DIR)/coddy.1
+	@echo "Installed to $(INSTALL_DIR)/coddy and $(MAN_DIR)/coddy.1"
+
+# ---- Distribution packages ----
+#   PKG_ARCHS  architectures to package, space or comma separated (default: host)
+#   PKG_TAGS   go build tags for the packaged binary (default: the release set)
+#   DIST_DIR   where the packages land (default: dist)
+#
+# `deb` and `rpm` build Linux packages from packaging/nfpm.yaml through
+# scripts/build-packages.sh; the release workflow calls the same script with the
+# binaries it has already cross-compiled. nfpm is fetched on demand.
+#
+# `brew` renders the Homebrew cask (packaging/homebrew/coddy.rb.tmpl) for the
+# macOS archives of a release. It needs those archives, so pass the version of a
+# published release: make brew VERSION=1.0.11
+#
+# `brew-cask-check` installs that rendered cask with a real Homebrew out of a
+# throwaway local tap and checks what it linked (macOS only); BREW_TAP=
+# coddy-project/coddy-agent checks the published cask by name instead. `brew-publish`
+# commits the rendered cask to the tap coddy-project/homebrew-coddy-agent, which the
+# release job does for every release.
+#
+# `brew-formula` renders the Homebrew formula (packaging/homebrew/coddy-formula.rb.tmpl)
+# for the source archive of a release - that is the artefact homebrew/core takes,
+# because Homebrew wants open-source command-line software built from source.
+# `brew-check` is the preflight for that submission. See docs/getting-started/homebrew.md.
+PKG_ARCHS ?= $(shell go env GOARCH)
+PKG_TAGS ?= $(FULL_TAGS)
+DIST_DIR ?= dist
+
+# Same rule as `build`: embedded assets must exist before a binary claims to
+# carry them.
+ifneq ($(and $(findstring http,$(PKG_TAGS)),$(findstring ui,$(PKG_TAGS))),)
+deb rpm: ui-build
+endif
+
+deb:
+	TAGS="$(PKG_TAGS)" scripts/build-packages.sh --version "$(VERSION)" --arch "$(PKG_ARCHS)" --out "$(DIST_DIR)" --formats deb
+
+rpm:
+	TAGS="$(PKG_TAGS)" scripts/build-packages.sh --version "$(VERSION)" --arch "$(PKG_ARCHS)" --out "$(DIST_DIR)" --formats rpm
+
+brew:
+	scripts/build-homebrew-cask.sh --version "$(VERSION)" --out "$(DIST_DIR)"
+
+brew-cask-check:
+	scripts/check-homebrew-cask.sh $(if $(BREW_TAP),--tap "$(BREW_TAP)",--cask "$(DIST_DIR)/coddy.rb")
+
+brew-publish:
+	scripts/publish-homebrew-tap.sh --version "$(VERSION)" --cask "$(DIST_DIR)/coddy.rb"
+
+brew-formula:
+	scripts/build-homebrew-formula.sh --version "$(VERSION)" --out "$(DIST_DIR)/formula"
+
+brew-check:
+	scripts/check-homebrew-submission.sh --version "$(VERSION)"
+
+# `check-image` builds the runtime image (Dockerfile) for every platform the
+# release publishes and checks that each one carries a coddy binary of its own
+# platform; the binary of the host's platform must also print $(VERSION). Docker
+# with buildx is all it needs: the build stages run natively and cross-compile,
+# so a plain docker driver builds linux/arm64 on an amd64 host and back. The
+# release runs the same script before it pushes (docker-build-push.yaml).
+IMAGE_PLATFORMS ?= linux/amd64,linux/arm64
+
+check-image:
+	scripts/check-image.sh --version "$(VERSION)" --platforms "$(IMAGE_PLATFORMS)" --out "$(DIST_DIR)/image"
+
+# Publish internal/config/config.schema.json (the schema embedded into the
+# binary for -t / --test-config) to the site repository, which serves it at
+# coddy.dev/config.schema.json - the address Coddy writes into every config it
+# saves. Point SITE_REPO at your checkout if it is not beside this one.
+# site-schema-check reports drift without writing (for a pre-push look).
+site-schema:
+	scripts/sync-site-schema.sh
+
+site-schema-check:
+	CHECK=1 scripts/sync-site-schema.sh
+
+# The models catalog the settings screen fills a model's window, max_tokens
+# and multimodal from: internal/llm/models/models.json, one line per model id of Coddy's
+# providers (OpenAI, Anthropic, OpenCode), built from models.dev and embedded
+# into the binary, so neither a build nor a running Coddy asks models.dev
+# anything. models-catalog downloads the catalog and rewrites the file only
+# when a model's numbers moved, naming the models; models-catalog-check only
+# reports it (exit 1 when the file is behind).
+models-catalog:
+	go run ./cmd/modelsgen
+
+models-catalog-check:
+	go run ./cmd/modelsgen -check
+
+# Documentation. docs/README.md (the hub), docs/llms.txt, docs/llms-full.txt, the
+# field tables of docs/reference/config.md, the help screens of docs/reference/cli.md
+# and the inventory of docs/assets/INDEX.md are generated by internal/docsgen from
+# docs/nav.yaml, the embedded config schema and the --help output of a full-tag
+# binary. docs-check regenerates into memory and fails on drift, on a page missing
+# from nav.yaml, on a broken relative link or anchor, and on an asset nothing uses.
+# docs-changelog additionally refreshes docs/getting-started/changelog.md from the
+# GitHub Releases (needs gh and network).
+docs:
+	$(MAKE) build TAGS="$(FULL_TAGS)"
+	go run ./cmd/docsgen -write -coddy $(BINARY) -tags "$(FULL_TAGS_CSV)"
+
+docs-check:
+	$(MAKE) build TAGS="$(FULL_TAGS)"
+	go run ./cmd/docsgen -coddy $(BINARY) -tags "$(FULL_TAGS_CSV)"
+
+# diagrams renders every docs/assets/diagrams/<name>.html into the <name>.png
+# the pages embed, at twice the CSS size, with headless Chromium (CHROME=...
+# names the binary) and the Noto Sans font. NAMES="a b" renders only those.
+# docs-check fails on a picture without its source and a source without its
+# picture; it cannot tell a picture that is older than its source, so render
+# after every edit of a source.
+diagrams:
+	scripts/render-diagrams.sh $(NAMES)
+
+# docs-fast regenerates everything but the CLI reference, so a machine without
+# Node (the ui tag needs the SPA build) can still refresh the hub, the llms
+# files, the config tables and the assets inventory.
+docs-fast:
+	go run ./cmd/docsgen -write -skip-cli
+
+# The documentation layer of coddy.dev: a stable address coddy.dev/docs/<slug>
+# for every page of docs/nav.yaml (one interceptor script behind the site 404 page),
+# plus llms.txt and llms-full.txt at the site root. The binary, the schema and
+# the bundled skill print those addresses. site-docs renders them into the
+# site checkout (SITE_REPO=... if it is elsewhere), site-docs-check reports
+# drift without writing.
+site-docs:
+	scripts/sync-site-docs.sh
+
+site-docs-check:
+	CHECK=1 scripts/sync-site-docs.sh
+
+# docs-stamp records that the translations named in PAGES follow their English
+# pages as they are now (docs/contributing/documentation.md, Translations). It
+# refuses a page whose translation did not change since HEAD; UNCHANGED=1
+# accepts one when the English change needs no translation.
+docs-stamp:
+	go run ./cmd/docsgen -stamp $(if $(filter 1 true yes,$(UNCHANGED)),-unchanged) $(PAGES)
+
+docs-changelog:
+	$(MAKE) build TAGS="$(FULL_TAGS)"
+	go run ./cmd/docsgen -changelog -write -coddy $(BINARY) -tags "$(FULL_TAGS_CSV)"
+
+# The skills Coddy carries inside its binary (internal/skills/bundled). Those
+# that live in their own repositories are vendored rather than fetched at
+# runtime: skills-vendor refreshes the copies from the upstreams named in
+# scripts/bundled-skills.json, skills-vendor-check reports drift without
+# writing. Needs jq, git and network.
+skills-vendor:
+	scripts/vendor-bundled-skills.sh
+
+skills-vendor-check:
+	scripts/vendor-bundled-skills.sh --check
+
+# Test every repository adapter that attaches Cursor rules to another host.
+test-agent-rules:
+	python3 -m unittest -v scripts/test_agent_rule_adapters.py
+	$(MAKE) test-opencode-rules
+
+# Test the project plugin that attaches Cursor rules to OpenCode sessions.
+test-opencode-rules:
+	node --test .opencode/tests/project-rules.test.js
+
+# ---- Tests ----
+#
+# Two speeds. `make test` is the express run: the SPA's vitest suite, then one
+# `go test` over the whole tree with every optional module compiled in
+# (FULL_TAGS, what the shipped binary contains), after the UI assets it embeds
+# are built. Run it locally before a push. `make test-matrix` walks every tag
+# combination in TEST_TAG_SETS - the lean untagged build with its stubs, single
+# tags, pairs, the shipped set - and is what CI runs on every pull request, one
+# job per combination
+# (.github/workflows/tests-on-pr.yaml reads the list through
+# print-test-tag-sets, so this variable is the only place it is written down).
+# Locally, reach for a single combination instead: go test -tags=<set> ./...
+empty :=
+space := $(empty) $(empty)
+comma := ,
+FULL_TAGS_CSV := $(subst $(space),$(comma),$(strip $(FULL_TAGS)))
+
+# Every tagged combination the tree is tested under, comma-joined. The untagged
+# build is implied and always runs first; the last entry must stay FULL_TAGS_CSV
+# so the express run and the matrix agree on what "everything" means. A ui
+# entry needs the embedded assets, so ui-build precedes the matrix and the CI
+# job builds them only for those entries.
+TEST_TAG_SETS := \
+	memory \
+	http \
+	http,memory \
+	scheduler \
+	scheduler,memory \
+	cli \
+	cli,scheduler,memory \
+	http,cli \
+	swarm \
+	http,ui \
+	http,ui,memory \
+	http,scheduler \
+	http,scheduler,memory \
+	http,scheduler,ui \
+	http,scheduler,ui,memory \
+	http,scheduler,ui,memory,cli \
+	gateway.telegram \
+	gateway.pachca \
+	gateway.max \
+	gateway \
+	http,scheduler,ui,memory,cli,gateway \
+	http,scheduler,ui,memory,cli,swarm \
+	metrics \
+	gateway,metrics \
+	browser \
+	http,browser \
+	$(FULL_TAGS_CSV)
+
+# Express run: the SPA suite, then the whole Go tree once with every optional
+# module compiled in.
+test: test-agent-rules ui-build ui-test
+	go test -tags=$(FULL_TAGS_CSV) ./...
+
+# Full matrix: every combination in TEST_TAG_SETS, in sequence. CI's job; run
+# it locally only when a build-tag boundary moved and one combination is not
+# enough.
+test-matrix: test-agent-rules ui-build ui-test
+	go test ./...
+	@set -e; for tags in $(TEST_TAG_SETS); do \
+		echo "go test -tags=$$tags ./..."; \
+		go test -tags=$$tags ./...; \
+	done
+
+# The matrix as a JSON array for the CI workflow: [""] for the untagged build,
+# then every entry of TEST_TAG_SETS.
+print-test-tag-sets:
+	@printf '[""'; for tags in $(TEST_TAG_SETS); do printf ',"%s"' "$$tags"; done; printf ']\n'
+
+# The race detector over the whole tree, with every optional module compiled in
+# but ui (LINT_TAGS_NO_UI below): that tag only embeds the SPA and needs Node,
+# and adds no Go concurrency. CI runs this target on every pull request, and
+# GOFLAGS=-count=3 repeats each test to shake out a race that shows up rarely.
+# Every package is clean under it; a race it reports is fixed, not skipped.
+test-race:
+	go test -race -tags=$(LINT_TAGS_NO_UI_CSV) ./...
+
+# The prompt-cache group: what every request sends the provider, held byte for
+# byte between the steps and the turns of a session - the system message, the
+# history prefix, the rules and where they ride. Its specs are the
+# features/prompt_cache_*.feature files and its tests are named TestPromptCache*,
+# so a new one joins the group by its name. It is part of `make test`; run it on
+# its own when a change touches the system prompt, the rules, the history or the
+# send boundary.
+test-cache:
+	go test -count=1 -run '^TestPromptCache' ./...
+
+# The performance group: the benchmarks (Benchmark*, in the perf_test.go files),
+# which `make test` never runs. They time the work a turn repeats - rules
+# discovery, the look for the rules a tool call brings in, the send boundary -
+# and report what a session of a real project costs the context as metrics
+# (system-tokens, request-tokens, duplicate-rules). BENCH narrows them to a
+# regexp, BENCHTIME sets how long each one runs.
+BENCH ?= .
+BENCHTIME ?= 1s
+test-perf:
+	go test -run '^$$' -bench '$(BENCH)' -benchtime $(BENCHTIME) -benchmem ./...
+
+# AppSec gate (issue #374): trivy (dependency vulnerabilities, secrets;
+# misconfig report-only), semgrep (SAST) and govulncheck (Go vulnerabilities
+# the code reaches, the pinned toolchain's standard library included) over the
+# checkout. One script is the only scanner invocation — CI's security.yaml
+# calls `make security`, so local runs and the pipeline share versions, flags
+# and thresholds. A binary on PATH is used when present; otherwise the pinned
+# docker image runs (SEC_DOCKER=0 forbids the fallback). Reports and the
+# severity summary land in dist/security/. SEC_FAIL_TRIVY (default CRITICAL,
+# vuln+secret only), SEC_FAIL_SEMGREP (default off — report only until the
+# backlog shrinks) and SEC_FAIL_GOVULNCHECK (default symbol: a vulnerable
+# function the code calls) set the gate. govulncheck builds with every shipped
+# tag but ui, whose embedded assets a fresh checkout does not hold. Guide:
+# docs/contributing/security-scanning.md.
+security:
+	GOVULNCHECK_TAGS=$(LINT_TAGS_NO_UI_CSV) scripts/security-scan.sh
+
+sec-trivy:
+	SEC_SCANNERS=trivy scripts/security-scan.sh
+
+sec-semgrep:
+	SEC_SCANNERS=semgrep scripts/security-scan.sh
+
+sec-govulncheck:
+	SEC_SCANNERS=govulncheck GOVULNCHECK_TAGS=$(LINT_TAGS_NO_UI_CSV) scripts/security-scan.sh
+
+# Same scans with the gate off: findings never fail this target, operational
+# errors (missing tool, dead docker, crashed scan) still do.
+sec-report:
+	SEC_FAIL_TRIVY=off SEC_FAIL_SEMGREP=off SEC_FAIL_GOVULNCHECK=off \
+		GOVULNCHECK_TAGS=$(LINT_TAGS_NO_UI_CSV) scripts/security-scan.sh
+
+# Console startup timings: the first frame timed in a real pty (pexpect + pyte,
+# examples/cli/requirements.txt), with an empty, a real and a synthetic skill
+# set and a source that never answers. Not a CI gate: the numbers are read by
+# a person (docs/plans/console-mcp-startup.md keeps the ones a change cited).
+# bench-cli-startup-real runs the same on a private copy of the operator's
+# own ~/.coddy, MCP servers included, and reports when every one settled.
+BENCH_RUNS ?= 5
+bench-cli-startup: $(BINARY)
+	python3 examples/cli/bench_tui_startup.py --bin main=$(BINARY) --runs $(BENCH_RUNS) --out $(BUILD_DIR)/bench-cli-startup.json
+
+bench-cli-startup-real: $(BINARY)
+	python3 examples/cli/bench_tui_real.py --bin main=$(BINARY) --runs $(BENCH_RUNS) --out $(BUILD_DIR)/bench-cli-startup-real.json
+
+# Type-check the Windows build without a Windows machine.
+#
+# The suite above runs on the host only, so every file behind //go:build windows
+# — the process group probe, console output decoding, the shell detector — is
+# invisible to it and to the linter. A change to a shared signature therefore
+# compiles here and breaks there, which is exactly the kind of drift nobody sees
+# until a user reports it. go vet builds test files too, so this covers the
+# Windows-only tests as well.
+#
+# The ui tag is deliberately absent: it embeds assets that only exist after
+# ui-build, and it carries no platform-specific code.
+check-windows:
+	GOOS=windows go build ./...
+	GOOS=windows go build -tags=cli ./...
+	GOOS=windows go vet ./...
+	GOOS=windows go vet -tags=memory ./...
+	GOOS=windows go vet -tags=http ./...
+	GOOS=windows go vet -tags=http,memory ./...
+	GOOS=windows go vet -tags=scheduler ./...
+	GOOS=windows go vet -tags=scheduler,memory ./...
+	GOOS=windows go vet -tags=http,scheduler ./...
+	GOOS=windows go vet -tags=http,scheduler,memory ./...
+	GOOS=windows go vet -tags=cli ./...
+	GOOS=windows go vet -tags=cli,scheduler,memory ./...
+	GOOS=windows go vet -tags=swarm ./...
+	GOOS=windows go vet -tags=http,swarm ./...
+	GOOS=windows go vet -tags=gateway ./...
+	GOOS=windows go vet -tags=http,scheduler,memory,cli,gateway ./...
+	GOOS=windows go vet -tags=metrics ./...
+	GOOS=windows go vet -tags=browser ./...
+	GOOS=windows go vet -tags=http,scheduler,memory,cli,gateway,swarm,metrics,browser ./...
+
+# Type-check the Android build without a device, test files included.
+#
+# internal/platform has files only GOOS=android compiles - android_init.go and
+# the cgo guard - so the host suite and linter never see them, the way
+# check-windows covers the Windows half. The build is cgo, so this needs the
+# NDK too. The ui tag is left out for the same reason as there.
+check-android:
+	GOOS=android GOARCH=arm64 CGO_ENABLED=1 CC=$$(scripts/android-cc.sh arm64) go vet ./...
+	GOOS=android GOARCH=arm64 CGO_ENABLED=1 CC=$$(scripts/android-cc.sh arm64) go vet -tags=$(LINT_TAGS_NO_UI_CSV) ./...
+	GOOS=android GOARCH=amd64 CGO_ENABLED=1 CC=$$(scripts/android-cc.sh amd64) go vet -tags=$(LINT_TAGS_NO_UI_CSV) ./...
+
+# Clean build artifacts.
+clean:
+	rm -rf $(BUILD_DIR) $(DIST_DIR)
+
+# ---- Lint ----
+#
+# Three golangci-lint passes reach every Go file of the host platform but the
+# http && !<tag> stubs of external/httpserver: the untagged tree (every other
+# stub), every tag but ui (the files that exist only without the SPA:
+# http && !ui, swarm && !ui, and every single-tag surface), and the shipped
+# set (the embedded SPA and the http && ui handlers, which is why the assets
+# are built first). fmt-check runs first and holds every tracked Go file to
+# gofmt -s, those stubs and the other platforms' files included, since the
+# gofmt formatter of .golangci.yml sees only what a pass compiles. The
+# TypeScript pass closes the gate over the SPA sources. The CI lint job reads
+# the two tag lists through print-full-tags and print-lint-tags-no-ui, so
+# FULL_TAGS is the only place they are written down.
+LINT_TAGS_NO_UI := $(filter-out ui,$(FULL_TAGS))
+LINT_TAGS_NO_UI_CSV := $(subst $(space),$(comma),$(strip $(LINT_TAGS_NO_UI)))
+
+print-full-tags:
+	@printf '%s\n' "$(FULL_TAGS_CSV)"
+
+print-lint-tags-no-ui:
+	@printf '%s\n' "$(LINT_TAGS_NO_UI_CSV)"
+
+# gofmt -s over every Go file git tracks, whatever its build constraints: no
+# build, no tags, a few seconds. CI's Lint job runs it as a step of its own.
+# A tracked file deleted from the working tree is skipped, as the linter
+# skips it. The paths travel NUL-separated (any name, unquoted) and reach
+# gofmt 200 at a time: the whole list is longer than a Windows command line
+# takes, and Git Bash starts gofmt.exe through one.
+fmt-check:
+	@if ! git ls-files -- '*.go' | grep -q .; then \
+		echo "fmt-check: git ls-files lists no Go file" >&2; \
+		exit 1; \
+	fi; \
+	out=$$(git ls-files -z -- '*.go' | xargs -0 -n 200 sh -c \
+		'for f do shift; [ ! -f "$$f" ] || set -- "$$@" "$$f"; done; [ $$# -eq 0 ] || exec gofmt -s -l -- "$$@"' sh) || exit 1; \
+	if [ -n "$$out" ]; then \
+		echo "gofmt -s would reformat these files (fix: gofmt -s -w <file>):" >&2; \
+		echo "$$out" >&2; \
+		exit 1; \
+	fi
+
+lint: fmt-check ui-build
+	golangci-lint run ./...
+	golangci-lint run --build-tags $(LINT_TAGS_NO_UI_CSV) ./...
+	golangci-lint run --build-tags $(FULL_TAGS_CSV) ./...
+	$(MAKE) ui-typecheck
+
+# The same three passes against the Windows build, which lint above never
+# compiles.
+lint-windows: ui-build
+	GOOS=windows golangci-lint run ./...
+	GOOS=windows golangci-lint run --build-tags $(LINT_TAGS_NO_UI_CSV) ./...
+	GOOS=windows golangci-lint run --build-tags $(FULL_TAGS_CSV) ./...
+
+# Enable the repo's git hooks (pre-commit runs scripts/checks.sh). One-time per clone.
+# Bypass a single commit with: git commit --no-verify
+hooks:
+	git config core.hooksPath .githooks
+	@echo "Enabled .githooks — 'git commit' now runs the linter, and Prettier over the SPA when it stages SPA files (scripts/checks.sh)."
+	@echo "Add tests with CODDY_HOOK_TESTS=fast|full|matrix; skip lint with CODDY_HOOK_LINT=0, Prettier with CODDY_HOOK_FORMAT=0; bypass once with --no-verify."

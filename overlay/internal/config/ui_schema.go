@@ -1,0 +1,1106 @@
+package config
+
+import (
+	"encoding/json"
+	"fmt"
+	"reflect"
+	"strings"
+)
+
+// UISchemaJSON returns a JSON Schema (draft 2020-12) document for ConfigJSON (UI editor).
+// HTTPServer is omitted; listen bind is controlled via CLI, not this form.
+func UISchemaJSON() ([]byte, error) {
+	return UISchemaJSONHiding()
+}
+
+// UISchemaJSONHiding is UISchemaJSON without the named sections: the form of a
+// binary that cannot run them. A hidden section is still part of the settings
+// document (GET and PUT /coddy/config), which the form writes back whole, so a
+// save keeps it in the file.
+func UISchemaJSONHiding(hide ...string) ([]byte, error) {
+	doc := UISchemaMap()
+	props := doc["properties"].(map[string]interface{})
+	for _, key := range hide {
+		delete(props, key)
+	}
+	var order []interface{}
+	for _, key := range doc["x-coddy-property-order"].([]interface{}) {
+		if _, shown := props[key.(string)]; shown {
+			order = append(order, key)
+		}
+	}
+	doc["x-coddy-property-order"] = order
+	return json.Marshal(doc)
+}
+
+func strProp(title, description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "string",
+		"title":       title,
+		"description": description,
+	}
+}
+
+func intProp(title, description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "integer",
+		"title":       title,
+		"description": description,
+	}
+}
+
+func numProp(title, description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "number",
+		"title":       title,
+		"description": description,
+	}
+}
+
+// withNumberBounds adds the range the settings form offers a number field
+// (minimum and maximum of its input); the loader's Validate stays the rule.
+func withNumberBounds(prop map[string]interface{}, minimum, maximum float64) map[string]interface{} {
+	prop["minimum"] = minimum
+	prop["maximum"] = maximum
+	return prop
+}
+
+func boolProp(title, description string) map[string]interface{} {
+	return map[string]interface{}{
+		"type":        "boolean",
+		"title":       title,
+		"description": description,
+	}
+}
+
+// boolPropDefault is boolProp for a flag whose absent value is not false. The
+// settings form reads the default both when seeding a new entry and when drawing
+// a switch for a key the configuration never set.
+func boolPropDefault(title, description string, def bool) map[string]interface{} {
+	out := boolProp(title, description)
+	out["default"] = def
+	return out
+}
+
+func objectSchema(title, description string, props map[string]interface{}, order []string, required []string) map[string]interface{} {
+	out := map[string]interface{}{
+		"type":                 "object",
+		"properties":           props,
+		"additionalProperties": false,
+	}
+	if title != "" {
+		out["title"] = title
+	}
+	if description != "" {
+		out["description"] = description
+	}
+	if len(order) > 0 {
+		ord := make([]interface{}, len(order))
+		for i, k := range order {
+			ord[i] = k
+		}
+		out["x-coddy-property-order"] = ord
+	}
+	if len(required) > 0 {
+		req := make([]interface{}, len(required))
+		for i, k := range required {
+			req[i] = k
+		}
+		out["required"] = req
+	}
+	return out
+}
+
+func attachNodeDefaults(node map[string]interface{}, def interface{}) {
+	if node == nil || def == nil {
+		return
+	}
+	t, _ := node["type"].(string)
+	switch t {
+	case "object":
+		props, ok := node["properties"].(map[string]interface{})
+		if !ok {
+			return
+		}
+		defObj, ok := def.(map[string]interface{})
+		if !ok {
+			return
+		}
+		for k, sub := range props {
+			sm, ok := sub.(map[string]interface{})
+			if !ok {
+				continue
+			}
+			if dv, ok := defObj[k]; ok {
+				attachNodeDefaults(sm, dv)
+			}
+		}
+	case "array":
+		node["default"] = def
+		items, ok := node["items"].(map[string]interface{})
+		if !ok {
+			return
+		}
+		arr, ok := def.([]interface{})
+		if !ok || len(arr) == 0 {
+			return
+		}
+		first, ok := arr[0].(map[string]interface{})
+		if !ok {
+			return
+		}
+		attachNodeDefaults(items, first)
+	default:
+		if def != nil {
+			node["default"] = def
+		}
+	}
+}
+
+func attachSchemaDefaultsFromExample(root map[string]interface{}, example *ConfigJSON) {
+	raw, err := json.Marshal(example)
+	if err != nil {
+		return
+	}
+	var m map[string]interface{}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return
+	}
+	props, ok := root["properties"].(map[string]interface{})
+	if !ok {
+		return
+	}
+	ensureObjectMatchesSchema(m, props)
+	for k, pv := range props {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		sub, ok := pv.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		attachNodeDefaults(sub, v)
+	}
+}
+
+// ensureObjectMatchesSchema fills omitted JSON keys (e.g. omitempty empty slices) so array defaults apply.
+func ensureObjectMatchesSchema(obj map[string]interface{}, schemaProps map[string]interface{}) {
+	for k, pv := range schemaProps {
+		sub, ok := pv.(map[string]interface{})
+		if !ok {
+			continue
+		}
+		typ, _ := sub["type"].(string)
+		switch typ {
+		case "array":
+			if _, ok := obj[k]; !ok {
+				obj[k] = []interface{}{}
+			}
+		case "object":
+			childProps, ok := sub["properties"].(map[string]interface{})
+			if !ok {
+				continue
+			}
+			childObj, ok := obj[k].(map[string]interface{})
+			if !ok || childObj == nil {
+				childObj = map[string]interface{}{}
+				obj[k] = childObj
+			}
+			ensureObjectMatchesSchema(childObj, childProps)
+		}
+	}
+}
+
+// acpProviderSchema is the acp block of a provider row of type acp: the agent
+// it runs. The settings form shows it on that type only.
+func acpProviderSchema() map[string]interface{} {
+	permissions := strProp("Agent permission requests",
+		"What Coddy answers when the agent asks to run one of its tools: ask puts the request in front of you, as Coddy's own tools do (allowed without asking under the bypass permission mode); allow approves it once; deny refuses it. In plan and ask mode every request is refused.")
+	permissions["enum"] = []string{ACPPermissionsAsk, ACPPermissionsAllow, ACPPermissionsDeny}
+	permissions["default"] = ACPPermissionsAsk
+	process := strProp("Agent process",
+		"shared: one agent process serves every session of this provider. per_session: every session gets a process of its own, for an agent that runs one prompt at a time (zcode-acp-server).")
+	process["enum"] = []string{ACPProcessShared, ACPProcessPerSession}
+	process["default"] = ACPProcessShared
+	args := map[string]interface{}{
+		"type":        "array",
+		"title":       "Arguments",
+		"description": "Arguments after the command, such as acp for opencode and coddy.",
+		"items":       map[string]interface{}{"type": "string"},
+	}
+	env := map[string]interface{}{
+		"type":                 "object",
+		"title":                "Environment",
+		"description":          "Variables added to the environment the agent starts with, such as a key it reads. ${CWD} is the session's workspace.",
+		"additionalProperties": map[string]interface{}{"type": "string"},
+	}
+	modes := objectSchema("Agent modes",
+		"The agent's own mode for each Coddy mode (an ACP mode id such as plan or read-only); empty keeps the agent's default. Put an agent that writes without asking into a read-only mode for plan and ask.",
+		map[string]interface{}{
+			"agent": strProp("In agent mode", "The agent's mode while the session is in agent mode."),
+			"plan":  strProp("In plan mode", "The agent's mode while the session is in plan mode."),
+			"ask":   strProp("In ask mode", "The agent's mode while the session is in ask mode."),
+		},
+		[]string{"agent", "plan", "ask"},
+		nil)
+	return objectSchema("ACP agent",
+		"The local program this provider runs: an agent that speaks the Agent Client Protocol on stdio, such as claude-agent-acp, codex-acp, opencode acp or coddy acp. It brings its own tools and works in the session's workspace.",
+		map[string]interface{}{
+			"command": strProp("Command", "The agent program, looked up on PATH: claude-agent-acp, codex-acp, opencode, coddy."),
+			"args":    args,
+			"env":     env,
+			"cwd": strProp("Working folder",
+				"A fixed folder for the agent and every session it opens. Empty opens each session in the workspace of the Coddy session it serves."),
+			"auth_method": strProp("Authentication method",
+				"The ACP authenticate method to call after start, for an agent that refuses sessions until a client does (codex-acp: api-key). Empty: the agent's own sign-in."),
+			"permissions": permissions,
+			"modes":       modes,
+			"idle_timeout_ms": intProp("Idle stop (ms)",
+				"Stop the agent this long after its last call; the next call starts it again and replays the conversation into a new session. 0 means sixty minutes."),
+			"process": process,
+		},
+		[]string{"command", "args", "env", "cwd", "auth_method", "permissions", "modes", "process", "idle_timeout_ms"},
+		[]string{"command"})
+}
+
+// UISchemaMap builds the JSON Schema as a generic map (for tests and handlers).
+func UISchemaMap() map[string]interface{} {
+	providerName := strProp("Provider id",
+		"Prefix of this provider's model ids, as in provider/model-id. Letters, digits, hyphen and underscore, starting with a letter.")
+	// HTML pattern attributes are compiled with the JavaScript RegExp v flag.
+	// Escape the hyphen so the schema can be rendered by modern browsers.
+	providerName["pattern"] = `^[a-zA-Z][a-zA-Z0-9_\-]*$`
+	providerAPIKey := strProp("API key",
+		"A literal key, a ${ENV} reference expanded when the file is loaded, or empty to read the environment variable the placeholder names at call time.")
+	providerAPIKey["x-coddy-provider-api-key-env-placeholder"] = true
+	providerProps := map[string]interface{}{
+		"name": providerName,
+		"type": map[string]interface{}{
+			"type":        "string",
+			"title":       "Provider type",
+			"description": "Wire protocol for this provider entry.",
+			"enum":        []string{"openai", "anthropic", "neuraldeep", "opencode", "codex", "devin", "acp"},
+		},
+		"api_base": strProp("API base URL", "Optional override of the provider's default API base URL. For neuraldeep it picks the deployment (Russia or the international mirror); for opencode it picks the gateway (the Go subscription or pay-as-you-go Console); ignored by codex and devin, which use their official endpoints, and by acp, whose agent runs on this machine."),
+		"api_key":  providerAPIKey,
+		"api_key_command": strProp("API key command",
+			"Optional credential helper, run through the host shell when the API key is empty; its trimmed stdout is the key, like git or docker credential helpers. On failure the environment variable is read instead."),
+		// The settings screen renders this field as the "Ignore system proxy"
+		// switch (the keyword none) above the URL (ProxySettingField).
+		"proxy": strProp("Proxy URL",
+			"Optional proxy for this provider only: http:// or https:// for an HTTP proxy, socks5:// or socks5h:// for SOCKS5 (with SOCKS the proxy resolves host names). A URL here replaces the system proxy for this provider. Left empty, the provider follows the system proxy (HTTPS_PROXY, HTTP_PROXY, NO_PROXY); none connects directly."),
+		"timeout_ms": intProp("Request timeout ms",
+			"Optional bound on each LLM HTTP request to this provider, including the streamed body read. 0 (the default) sets no client timeout."),
+		// Defaults to true when the key is absent, like models[].stream: the
+		// form seeds new rows from schema defaults and renders an unset switch
+		// from them.
+		"usage_limits_panel": boolPropDefault("Usage limits panel",
+			"Show the account usage of this NeuralDeep, Codex or Devin provider here, in the console footer and in /usage, reading its usage endpoint for it. Off hides the panel and stops those reads for this row.",
+			true),
+		"acp": acpProviderSchema(),
+	}
+	modelProps := map[string]interface{}{
+		"model": strProp("Model id", "Logical id in the form provider/api-model-id; must match a provider name prefix."),
+		"max_tokens": intProp("Max tokens",
+			"Upper bound on completion tokens the model may emit for one assistant message. Ignored by Codex because its backend does not accept max_output_tokens."),
+		"temperature": numProp("Temperature",
+			"Sampling temperature for this logical model (0 = deterministic, higher = more random)."),
+		"max_context_tokens": intProp("Context window (tokens)",
+			"The model's context window: what the composer context ring and automatic compaction measure against. 0 reads it from the provider's model listing when it reports one, else 128000."),
+		"multimodal": boolProp("Multimodal",
+			"When true, the model accepts image or file inputs in addition to text. The UI will offer file attachment for messages sent with this model, and read shows it the picture in a PNG, JPEG, GIF or WebP file."),
+		"reasoning_levels": map[string]interface{}{
+			"type":        "array",
+			"title":       "Reasoning levels",
+			"description": "Optional override of the reasoning levels offered for this model (e.g. low, medium, high). Leave empty to auto-detect from the model id; an explicit empty list hides the reasoning selector.",
+			"items":       map[string]interface{}{"type": "string"},
+		},
+		"reasoning_default": strProp("Default reasoning level",
+			"Reasoning level pre-selected for new chats with this model. Must be one of the resolved reasoning levels; ignored otherwise."),
+		"allow_reasoning_off": boolPropDefault("Allow disabling reasoning",
+			"Expose Off in the reasoning selector for this model. Enable it only when this provider/model deployment honours Coddy's provider-specific request that disables reasoning; Coddy cannot verify that capability automatically.",
+			false),
+		// The only boolean here that defaults to true when the key is absent, so the
+		// schema has to say so: the form seeds new entries from schema defaults and
+		// renders an unset switch from them.
+		"stream": boolPropDefault("Stream responses",
+			"Leave on to receive the answer token by token over SSE. Turn off to send one blocking request and wait for the whole answer, for servers or proxies that handle event streams badly; the transcript then fills in at once instead of typing out. Not available for codex models, whose backend is streaming-only.",
+			true),
+		"toolset": strProp("Toolset",
+			"The toolset a session on this model is offered its tools by, unless the session picks another. Empty offers every tool the mode would. Spares a small-context local model the schemas of tools it never calls."),
+	}
+	toolsetProps := map[string]interface{}{
+		"name": strProp("Name", "What models and the /toolset command call it: letters, digits, '.', '_' and '-'. default is reserved: it means every tool the mode offers."),
+		"tools": map[string]interface{}{
+			"type":        "array",
+			"title":       "Allowed tools",
+			"description": "Tools offered with this toolset: tool names, * or a prefix* (context7__* is every tool of that MCP server). Empty offers every tool the mode would. It only narrows, and a call to an unlisted tool is refused.",
+			"items":       map[string]interface{}{"type": "string"},
+		},
+		"disallowed_tools": map[string]interface{}{
+			"type":        "array",
+			"title":       "Disallowed tools",
+			"description": "Tools removed from this toolset, applied after the allowed tools, with the same names and patterns. A call to a removed tool is refused.",
+			"items":       map[string]interface{}{"type": "string"},
+		},
+	}
+	isolationEnum := []string{string(IsolationIndividual), string(IsolationShared), string(IsolationAdmin)}
+	telegramUserGroupProps := map[string]interface{}{
+		"name": strProp("Group name", "Name referenced by access as group:<name>."),
+		"user_ids": map[string]interface{}{
+			"type":        "array",
+			"title":       "User IDs",
+			"description": "Telegram numeric user IDs that belong to this group.",
+			"items":       map[string]interface{}{"type": "integer"},
+		},
+	}
+	telegramChatProps := map[string]interface{}{
+		"chat_id": intProp("Chat ID", "Telegram chat id; negative for groups and supergroups."),
+		"isolation": map[string]interface{}{
+			"type": "string", "title": "Isolation",
+			"description": "Per-chat session isolation override.",
+			"enum":        isolationEnum,
+		},
+		"access": strProp("Access", "Per-chat access override: all, admins, or group:<name>."),
+	}
+	telegramProps := map[string]interface{}{
+		"enable": boolProp("Enabled", "Run the Telegram bot (requires the gateway or gateway.telegram build tag)."),
+		"token": strProp("Bot token",
+			"BotFather token. Optional here — leave empty to read it from the TELEGRAM_BOT_TOKEN environment variable (e.g. via .env). Secret: when set it is stored in config.yaml and shown in full."),
+		"rich_messages": boolProp("Rich messages",
+			"Use Bot API 10.1 Rich Messages: the agent's native Markdown renders verbatim, tool activity streams as a Thinking placeholder, and executed tools show in a collapsible block. Falls back to legacy formatting if unsupported."),
+		// Rendered as the "Ignore system proxy" switch above the URL, like a
+		// provider's proxy (ProxySettingField).
+		"proxy": strProp("Proxy URL",
+			"Optional proxy for the Bot API requests: http:// or https:// for an HTTP proxy, socks5:// or socks5h:// for SOCKS5 (with SOCKS the proxy resolves host names). A URL here replaces the system proxy for the bot. Left empty, the bot follows the system proxy (HTTPS_PROXY, HTTP_PROXY, NO_PROXY); none connects directly."),
+		"admins": map[string]interface{}{
+			"type":        "array",
+			"title":       "Admins",
+			"description": "Telegram user IDs with elevated rights; admins always pass access checks.",
+			"items":       map[string]interface{}{"type": "integer"},
+		},
+		"default_access": strProp("Default access",
+			"Fallback access level for chats without an override: all, admins, or group:<name>."),
+		"default_isolation": map[string]interface{}{
+			"type": "string", "title": "Default isolation",
+			"description": "Fallback session isolation for group chats.",
+			"enum":        isolationEnum,
+		},
+		"user_groups": map[string]interface{}{
+			"type":        "array",
+			"title":       "User groups",
+			"description": "Named sets of user IDs referenced by access as group:<name>.",
+			"items": objectSchema("", "", telegramUserGroupProps,
+				[]string{"name", "user_ids"}, []string{"name"}),
+		},
+		"chats": map[string]interface{}{
+			"type":        "array",
+			"title":       "Per-chat overrides",
+			"description": "Override isolation and access for specific chats.",
+			"items": objectSchema("", "", telegramChatProps,
+				[]string{"chat_id", "isolation", "access"}, []string{"chat_id"}),
+		},
+		"mini_app": objectSchema("Mini App",
+			"Open this web UI as the bot's Telegram Mini App: the menu button and /app open it on the chat's own conversation. Telegram opens Mini Apps over https only: publish the web UI behind a TLS proxy and keep sign-in on.",
+			map[string]interface{}{
+				"url": strProp("Web UI address",
+					"The public https address the web UI is served at, for example https://coddy.example.com/. No fragment. Empty: the bot offers no Mini App and leaves a menu button set in @BotFather alone."),
+				"menu_button": boolProp("Menu button",
+					"Make the bot's menu button open the web UI. Turned off, with the address emptied or while the web UI asks for no sign-in, the bot puts back the button it replaced, as long as that button still opens the address the bot set."),
+			}, []string{"url", "menu_button"}, nil),
+	}
+
+	pachcaUserGroupProps := map[string]interface{}{
+		"name": strProp("Group name", "Name referenced by access as group:<name>."),
+		"user_ids": map[string]interface{}{
+			"type":        "array",
+			"title":       "User IDs",
+			"description": "Pachca user IDs that belong to this group.",
+			"items":       map[string]interface{}{"type": "integer"},
+		},
+	}
+	pachcaChatProps := map[string]interface{}{
+		"chat_id": intProp("Chat ID", "Pachca chat id: a conversation, a channel, a direct chat or a thread's own chat."),
+		"isolation": map[string]interface{}{
+			"type": "string", "title": "Isolation",
+			"description": "Per-chat session isolation override.",
+			"enum":        isolationEnum,
+		},
+		"access": strProp("Access", "Per-chat access override: all, admins, or group:<name>."),
+	}
+	pachcaProps := map[string]interface{}{
+		"enable": boolProp("Enabled", "Run the Pachca bot (requires the gateway or gateway.pachca build tag)."),
+		"token": strProp("Bot token",
+			"The access token of a Pachca integration bot. Optional here: leave empty to read it from the PACHCA_BOT_TOKEN environment variable (e.g. via .env). Secret: when set it is stored in config.yaml and shown in full."),
+		"proxy": strProp("Proxy URL",
+			"Optional proxy for the Pachca API requests: http:// or https:// for an HTTP proxy, socks5:// or socks5h:// for SOCKS5. A URL here replaces the system proxy for the bot. Left empty, the bot follows the system proxy (HTTPS_PROXY, HTTP_PROXY, NO_PROXY); none connects directly."),
+		"poll_interval_seconds": intProp("Poll interval, seconds",
+			"How often the bot reads its events history, 1 to 60 seconds (default 2)."),
+		"admins": map[string]interface{}{
+			"type":        "array",
+			"title":       "Admins",
+			"description": "Pachca user IDs with elevated rights; admins always pass access checks.",
+			"items":       map[string]interface{}{"type": "integer"},
+		},
+		"default_access": strProp("Default access",
+			"Fallback access level for chats without an override: all, admins, or group:<name>."),
+		"default_isolation": map[string]interface{}{
+			"type": "string", "title": "Default isolation",
+			"description": "Fallback session isolation for group chats.",
+			"enum":        isolationEnum,
+		},
+		"user_groups": map[string]interface{}{
+			"type":        "array",
+			"title":       "User groups",
+			"description": "Named sets of user IDs referenced by access as group:<name>.",
+			"items": objectSchema("", "", pachcaUserGroupProps,
+				[]string{"name", "user_ids"}, []string{"name"}),
+		},
+		"chats": map[string]interface{}{
+			"type":        "array",
+			"title":       "Per-chat overrides",
+			"description": "Override isolation and access for specific chats.",
+			"items": objectSchema("", "", pachcaChatProps,
+				[]string{"chat_id", "isolation", "access"}, []string{"chat_id"}),
+		},
+	}
+
+	maxUserGroupProps := map[string]interface{}{
+		"name": strProp("Group name", "Name referenced by access as group:<name>."),
+		"user_ids": map[string]interface{}{
+			"type":        "array",
+			"title":       "User IDs",
+			"description": "MAX user IDs that belong to this group.",
+			"items":       map[string]interface{}{"type": "integer"},
+		},
+	}
+	maxChatProps := map[string]interface{}{
+		"chat_id": intProp("Chat ID", "MAX chat id of a direct chat or a group."),
+		"isolation": map[string]interface{}{
+			"type": "string", "title": "Isolation",
+			"description": "Per-chat session isolation override.",
+			"enum":        isolationEnum,
+		},
+		"access": strProp("Access", "Per-chat access override: all, admins, or group:<name>."),
+	}
+	maxProps := map[string]interface{}{
+		"enable": boolProp("Enabled", "Run the MAX bot (requires the gateway or gateway.max build tag)."),
+		"token": strProp("Bot token",
+			"Bot token of a MAX bot. Optional here: leave empty to read it from the MAX_BOT_TOKEN environment variable (e.g. via .env). Secret: when set it is stored in config.yaml and shown in full."),
+		"proxy": strProp("Proxy URL",
+			"Optional proxy for the MAX API requests: http:// or https:// for an HTTP proxy, socks5:// or socks5h:// for SOCKS5. A URL here replaces the system proxy for the bot. Left empty, the bot follows the system proxy (HTTPS_PROXY, HTTP_PROXY, NO_PROXY); none connects directly."),
+		"ca_file": strProp("CA bundle",
+			"Path to a PEM bundle of additional root certificates for the MAX API, for example the MinCifry root. Empty uses the system trust store."),
+		"poll_timeout_seconds": intProp("Poll timeout, seconds",
+			"How long the server may hold one poll open, 1 to 60 seconds (default 30)."),
+		"poll_interval_seconds": intProp("Poll interval, seconds",
+			"Pause between two polls, 1 to 60 seconds (default 1)."),
+		"admins": map[string]interface{}{
+			"type":        "array",
+			"title":       "Admins",
+			"description": "MAX user IDs with elevated rights; admins always pass access checks.",
+			"items":       map[string]interface{}{"type": "integer"},
+		},
+		"default_access": strProp("Default access",
+			"Fallback access level for chats without an override: all, admins, or group:<name>."),
+		"default_isolation": map[string]interface{}{
+			"type": "string", "title": "Default isolation",
+			"description": "Fallback session isolation for group chats.",
+			"enum":        isolationEnum,
+		},
+		"user_groups": map[string]interface{}{
+			"type":        "array",
+			"title":       "User groups",
+			"description": "Named sets of user IDs referenced by access as group:<name>.",
+			"items": objectSchema("", "", maxUserGroupProps,
+				[]string{"name", "user_ids"}, []string{"name"}),
+		},
+		"chats": map[string]interface{}{
+			"type":        "array",
+			"title":       "Per-chat overrides",
+			"description": "Override isolation and access for specific chats.",
+			"items": objectSchema("", "", maxChatProps,
+				[]string{"chat_id", "isolation", "access"}, []string{"chat_id"}),
+		},
+	}
+
+	props := map[string]interface{}{
+		"providers": map[string]interface{}{
+			"type":        "array",
+			"title":       "LLM providers",
+			"description": "API credentials and transport selection for upstream LLM vendors.",
+			"items": objectSchema("", "", providerProps,
+				[]string{"name", "type", "acp", "api_base", "api_key", "api_key_command", "proxy", "timeout_ms", "usage_limits_panel"},
+				[]string{"name", "type"}),
+		},
+		"models": map[string]interface{}{
+			"type":        "array",
+			"title":       "Logical models",
+			"description": "Named model entries the agent and UI can select; ids reference provider prefixes.",
+			"items": objectSchema("", "", modelProps,
+				[]string{"model", "max_tokens", "temperature", "max_context_tokens", "multimodal", "stream", "reasoning_levels", "reasoning_default", "allow_reasoning_off", "toolset"},
+				[]string{"model"}),
+		},
+		"toolsets": map[string]interface{}{
+			"type":        "array",
+			"title":       "Toolsets",
+			"description": "Named presets of the tools a session is offered. A model names one as its own; a session picks one with /toolset.",
+			"items": objectSchema("", "", toolsetProps,
+				[]string{"name", "tools", "disallowed_tools"},
+				[]string{"name"}),
+		},
+		"supervisor": objectSchema("Session supervisor", "Checks goals with a second model and watches for stalled or looping turns.",
+			map[string]interface{}{
+				"enable":            boolProp("Check every turn", "Check ordinary turns against the latest request even when no /goal is set. A session goal is checked regardless of this switch."),
+				"model":             strProp("Supervisor model", "Configured model that checks the work. Empty uses the session model, which then grades its own work; a model of another family is the better judge."),
+				"verify":            boolProp("Verify before closing", "Before a goal is closed, a read-only subagent opens the workspace and confirms every requirement the check found met."),
+				"stall_seconds":     intProp("Stall seconds", "Silence before a goal turn is cut, excluding permission prompts, running tools and background tasks. 0 disables stall detection."),
+				"max_nudges":        intProp("Max nudges", "Recovery turns after a stall, a tool loop or a failed turn."),
+				"max_continuations": intProp("Max continuations", "Automatic follow-up turns one goal may use before it stops as limited."),
+				"loop_repeat":       intProp("Loop repeat", "How many times a repeating cycle of identical tool operations may come round. 0 disables loop detection."),
+				"token_budget":      intProp("Token budget", "Uncached input plus output tokens one goal may spend. 0 means no cap."),
+				"max_chain_sessions": intProp("Max chain sessions",
+					"Sessions one goal chain (/goal --then-file) may open one after another. 0 turns goal chains off."),
+			},
+			[]string{"enable", "model", "verify", "max_continuations", "token_budget", "max_chain_sessions", "stall_seconds", "max_nudges", "loop_repeat"}, nil),
+		"agent": objectSchema("ReAct loop", "Defaults for the main agent loop (model id and safety caps).",
+			map[string]interface{}{
+				"queue_mode": map[string]interface{}{"type": "string", "title": "Queue mode", "description": "Preferred action for Enter while a turn runs. Choose steer for the next ReAct step or after_turn for a new turn after the answer.", "enum": []interface{}{"steer", "after_turn"}},
+				"model":      strProp("Default model", "Logical model id from the models list used when the client omits a model."),
+				"max_turns": intProp("Max turns",
+					"Cap on ReAct iterations (LLM calls plus tool rounds) for one user request; 0 means no limit."),
+				"llm_retry_max": intProp("LLM retry max",
+					"Extra attempts shared by transport retries, empty-answer recovery, first-token re-issues and output-limit recovery (a step cut off at max_tokens) until tool progress or a new follow-up. 0 disables these retries. Loop guards, Stop hooks, fallback models and quota-reset waits have separate limits."),
+				"llm_retry_base_ms": intProp("LLM retry base ms",
+					"Initial backoff between LLM retries in milliseconds; a server-provided pause (Retry-After) overrides it."),
+				"llm_min_interval_ms": intProp("LLM min interval ms",
+					"Minimum gap between consecutive LLM calls in milliseconds, retries included (0 disables pacing)."),
+				"llm_first_token_timeout_ms": intProp("LLM first token timeout ms",
+					"How long a streamed LLM call may stay silent before the turn cancels it (an explicit 0 disables the guard)."),
+				"llm_stream_idle_timeout_ms": intProp("LLM stream idle timeout ms",
+					"How long a streamed LLM response may send nothing after its first bytes before it is cut as stalled, the delivered text kept (an explicit 0 disables the guard)."),
+				"loop_guard": boolProp("Loop guard",
+					"Stop a response that degenerates into repeating itself, and block a tool called over and over with identical arguments."),
+				"loop_tool_repeat_limit": intProp("Loop tool repeat limit",
+					"Consecutive identical tool calls before the loop guard steps in (0 disables the check)."),
+				"loop_stream_repeat_cycles": intProp("Loop stream repeat cycles",
+					"Identical back-to-back output cycles inside one streamed response before it is cut (0 disables the check)."),
+				"loop_nudge_max": intProp("Loop nudge max",
+					"How many times one turn may be nudged back on track before the loop guard stops it."),
+				"wait_for_limit_reset": boolProp("Wait for limit reset",
+					"Wait for a hit usage limit to lift and re-issue the call instead of ending the turn with the provider's error; the turn and the client stream stay open meanwhile."),
+				"wait_for_limit_reset_max_ms": intProp("Wait for limit reset max ms",
+					"Longest time one turn spends waiting for limits in total, in milliseconds (default four hours); a pause that would exceed it ends the turn at once, 0 never waits."),
+			},
+			[]string{
+				"model", "queue_mode", "max_turns", "llm_retry_max", "llm_retry_base_ms", "llm_min_interval_ms",
+				"llm_first_token_timeout_ms", "llm_stream_idle_timeout_ms", "loop_guard", "loop_tool_repeat_limit", "loop_stream_repeat_cycles", "loop_nudge_max",
+				"wait_for_limit_reset", "wait_for_limit_reset_max_ms",
+			},
+			nil),
+		"tools": objectSchema("Tools and permissions", "Filesystem and shell policy for built-in tools.",
+			map[string]interface{}{
+				"command_allowlist": map[string]interface{}{
+					"type":        "array",
+					"title":       "Command allowlist",
+					"description": "If non-empty, only these shell command prefixes may run without extra policy.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+				"output_limits": objectSchema("Tool output limits",
+					"Maximum lines each tool result or error may return into the LLM context. Enabled limits also apply a 64 KiB per-call byte safety ceiling. 0 disables both limits; unset uses the built-in default.",
+					map[string]interface{}{
+						"read":            intProp("read", "Max lines for a read file page or directory listing (default 1000)."),
+						"grep":            intProp("grep", "Max path:line:content records from grep (default 200)."),
+						"glob":            intProp("glob", "Max paths from glob (default 300)."),
+						"print_tree":      intProp("print_tree", "Max lines of a directory tree (default 400)."),
+						"run_command":     intProp("run_command", "Max stdout+stderr lines of a shell command (default 500)."),
+						"ssh_run_command": intProp("ssh_run_command", "Max stdout+stderr lines of a remote SSH command (default 500)."),
+						"webfetch":        intProp("webfetch", "Max lines of fetched page markdown (default 800)."),
+						"websearch":       intProp("websearch", "Max lines of search results (default 200)."),
+						"default":         intProp("default", "Applies to any unlisted tool, including MCP (default 1000; 0 = unlimited)."),
+					},
+					[]string{"read", "grep", "glob", "print_tree", "run_command", "ssh_run_command", "webfetch", "websearch", "default"},
+					nil),
+				"background": objectSchema("Background tasks",
+					"Commands the agent runs detached in the session task pool instead of blocking a turn.",
+					map[string]interface{}{
+						"enable": map[string]interface{}{
+							"type":        "boolean",
+							"title":       "Enabled",
+							"description": "Offer the background option on run_command and the background task tools (default true).",
+						},
+						"max_concurrent":          intProp("Max concurrent", "How many background tasks one session may run at once (default 5)."),
+						"default_timeout_seconds": intProp("Default timeout (s)", "Hard limit for a task started without a timeout or a duration estimate (default 900)."),
+						"max_timeout_seconds":     intProp("Max timeout (s)", "Ceiling applied to any requested or estimated timeout (default 3600)."),
+						"output_buffer_bytes":     intProp("Output buffer (bytes)", "How much of each task's output stays in memory for the ticker; the full log still goes to the session bundle (default 262144)."),
+					},
+					[]string{"enable", "max_concurrent", "default_timeout_seconds", "max_timeout_seconds", "output_buffer_bytes"},
+					nil),
+				"preview_server": objectSchema("Preview server",
+					"The preview_server tool: a static file server the agent starts over a project directory, on a free port, so you can open the work in a browser.",
+					map[string]interface{}{
+						"enable": map[string]interface{}{
+							"type":        "boolean",
+							"title":       "Enabled",
+							"description": "Offer the preview_server tool (default true). Turning background tasks off turns it off as well.",
+						},
+						"host":        strProp("Bind host", "Address the server binds, without a port (default 127.0.0.1). Anything that is not loopback exposes the served directory."),
+						"public_host": strProp("Public host", "Host written into the URL the agent hands out, when the browser is on another machine. Empty uses the bind host."),
+					},
+					[]string{"enable", "host", "public_host"},
+					nil),
+				"canvas": objectSchema("Canvas",
+					"The canvas of the web UI: a .canvas file of the workspace shown in the Files window as a board of live frames, each a page of the workspace running in a sandbox.",
+					map[string]interface{}{
+						"enable": map[string]interface{}{
+							"type":        "boolean",
+							"title":       "Enabled",
+							"description": "Offer the canvas_show and canvas_inspect tools and show the canvas (default true).",
+						},
+						"allow_cdn": map[string]interface{}{
+							"type":        "boolean",
+							"title":       "Allow common CDNs",
+							"description": "Let a frame load libraries, styles and fonts from jsDelivr, unpkg, cdnjs, the Tailwind CDN and Google Fonts (default true).",
+						},
+						"allowed_sources": map[string]interface{}{
+							"type":        "array",
+							"title":       "Allowed sources",
+							"description": "Further hosts a frame may load from and connect to: https://host or https://*.host. A page on the canvas can send what it reads to any of them.",
+							"items":       map[string]interface{}{"type": "string"},
+						},
+					},
+					[]string{"enable", "allow_cdn", "allowed_sources"},
+					nil),
+				"websearch": objectSchema("Web search",
+					"Which search engines the websearch tool asks, in what order their results merge, and what it may spend asking them. Each engine reports its own outcome next to the results, so a backend that was turned away is named rather than counted as \"nothing found\".",
+					map[string]interface{}{
+						"engines": map[string]interface{}{
+							"type":        "array",
+							"title":       "Engines",
+							"description": "Search engines to ask, in merge order (default: brave, bing). \"ddg\" and \"google\" are not asked by default: from a server DuckDuckGo answers with an anti-bot page and Google renders its results in the browser. \"searxng\" needs the address below.",
+							"items":       map[string]interface{}{"type": "string", "enum": KnownWebSearchEngines()},
+						},
+						"engine_timeout_seconds": intProp("Engine timeout (s)", "Seconds one engine may take before it is reported as unavailable (default 8)."),
+						"total_timeout_seconds":  intProp("Total timeout (s)", "Seconds the whole search may take, however many engines it asks (default 20)."),
+						"max_concurrent_engines": intProp("Max concurrent engines", "How many engines are asked at once (default 4)."),
+						"snippet_chars":          intProp("Snippet length", "Maximum characters of one result description (default 320)."),
+						"cache_ttl_seconds":      intProp("Cache TTL (s)", "Seconds one engine answer is reused before the engine is asked again (default 300; negative turns caching off)."),
+						"searxng_url": map[string]interface{}{
+							"type":        "string",
+							"title":       "SearXNG URL",
+							"description": "Base address of your own SearXNG instance, asked over its JSON API (enable the json format in its settings.yml). localhost and LAN addresses are allowed.",
+						},
+						"brave_api_key": map[string]interface{}{
+							"type":        "string",
+							"title":       "Brave Search API key",
+							"description": "With a subscription token the brave engine uses the official JSON API instead of reading the public result page. Leave empty to read BRAVE_API_KEY from the environment or ~/.coddy/.env.",
+						},
+					},
+					[]string{"engines", "engine_timeout_seconds", "total_timeout_seconds", "max_concurrent_engines", "snippet_chars", "cache_ttl_seconds", "searxng_url", "brave_api_key"},
+					nil),
+				"http_request": objectSchema("HTTP requests",
+					"Policy of the http_request tool, the agent's curl: where it goes without asking and the headers every request sends. Under ask and accept_edits a request asks unless its destination is allowed here or was approved in the session; bypass never asks.",
+					map[string]interface{}{
+						"allowlist": map[string]interface{}{
+							"type":        "array",
+							"title":       "Allowlist",
+							"description": "Destinations reached without asking: a host (api.github.com), *.example.com, an origin (http://localhost:8080) or an address prefix (https://api.example.com/v1/); \"*\" allows all. Covers uploads and an unchecked certificate; a proxy needs its own entry, and a saved response follows the write policy.",
+							"items":       map[string]interface{}{"type": "string"},
+						},
+						"default_headers": map[string]interface{}{
+							"type":                 "object",
+							"title":                "Default headers",
+							"description":          "Headers every request sends unless the call names them itself, such as a browser User-Agent for a site that turns tools away. A call's own headers win, and an empty value leaves a header out. They go to every destination, so keep credentials out unless that is the intent; Host, Content-Type, Content-Length, Transfer-Encoding, the hop-by-hop headers and Proxy-Authorization are refused, and webfetch and the model providers never send these.",
+							"additionalProperties": map[string]interface{}{"type": "string"},
+						},
+					},
+					[]string{"allowlist", "default_headers"},
+					nil),
+			},
+			[]string{"command_allowlist", "output_limits", "background", "preview_server", "canvas", "websearch", "http_request"},
+			nil),
+		"subagents": objectSchema("Subagents",
+			"User-defined child agents the model can delegate to with spawn_agent. Definitions are markdown files with YAML frontmatter; each run is a background task of the parent session with its own child session and transcript.",
+			map[string]interface{}{
+				"enable": map[string]interface{}{
+					"type":        "boolean",
+					"title":       "Enabled",
+					"description": "Register the spawn_agent tool and list the subagent catalog in the system prompt (default true).",
+				},
+				"dirs": map[string]interface{}{
+					"type":        "array",
+					"title":       "Definition directories",
+					"description": "Extra definition directories, read after the four default folders and stronger than them. The defaults are always read, lowest priority first: ${HOME}/.agents/agents, the project's .agents/agents, ${CODDY_HOME}/agents, the project's .coddy/agents; then these entries in their order. A definition found in several directories is taken from the last one in this order, and a directory named twice is read at its last place. ${CODDY_HOME} expands when the file is loaded, ${HOME} and ~ to your home folder, ${CWD} and a relative path against the session's workspace. Directories inside the workspace are project scope and follow the trust policy.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+				"project_trust": map[string]interface{}{
+					"type":        "string",
+					"title":       "Project definitions",
+					"description": "Definitions found inside the workspace travel with the checkout. \"ask\": load them but refuse to spawn one until it is approved for this workspace (the shield of its row in Definitions, coddy agents trust on the machine running coddy, or POST /coddy/subagents/{name}/trust). \"allow\": treat them like your own files. \"deny\": never read them.",
+					"enum":        []string{SubagentsProjectTrustAsk, SubagentsProjectTrustAllow, SubagentsProjectTrustDeny},
+				},
+				"max_concurrent":          intProp("Max concurrent", "How many subagent runs the whole process may have in flight at once (default 4). Extra spawns are refused, not queued."),
+				"max_depth":               intProp("Max depth", "How deep spawning may nest: 1 lets a session spawn subagents that cannot spawn further (default), 0 forbids spawning everywhere."),
+				"default_timeout_seconds": intProp("Default timeout (s)", "Hard limit for one run whose definition and call give no timeout (default 1800); capped by the background max timeout."),
+				"max_turns":               intProp("Max turns", "ReAct rounds a child may take; 0 follows agent.max_turns."),
+			},
+			[]string{"enable", "dirs", "project_trust", "max_concurrent", "max_depth", "default_timeout_seconds", "max_turns"},
+			nil),
+		"hooks": objectSchema("Hooks",
+			"Operator commands run at lifecycle points of a session: before and after a tool call, when a prompt is submitted, when the agent stops, on session start and around compaction. Definitions are JSON files in the Claude Code shape; files found inside the workspace follow the trust policy.",
+			map[string]interface{}{
+				"enable": map[string]interface{}{
+					"type":        "boolean",
+					"title":       "Enabled",
+					"description": "Load and run hooks at all (default true).",
+				},
+				"files": map[string]interface{}{
+					"type":        "array",
+					"title":       "Definition files",
+					"description": "Lowest priority first; every matching hook runs. ${CODDY_HOME} and ${CWD} expand. Files inside the workspace are project scope and follow the trust policy; only the hooks key of a Claude Code settings file is read.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+				"project_trust": map[string]interface{}{
+					"type":        "string",
+					"title":       "Project hooks",
+					"description": "Hook files found inside the workspace travel with the checkout. \"ask\": list them but run nothing until the file is approved for this workspace on the machine running coddy (coddy hooks trust there, or POST /coddy/hooks/trust). \"allow\": treat them like your own file. \"deny\": never read them.",
+					"enum":        []string{ProjectTrustAsk, ProjectTrustAllow, ProjectTrustDeny},
+				},
+				"default_timeout_seconds": intProp("Default timeout (s)", "Hard limit for one hook process whose definition gives no timeout (default 60)."),
+				"stop_loop_limit":         intProp("Stop loop limit", "How many times per turn a Stop hook may send the agent back to work (default 5)."),
+				"max_output_chars":        intProp("Max output chars", "Cap on the context, messages and reasons one hook may hand to the model or the user; longer values are truncated with a marker (default 10000)."),
+			},
+			[]string{"enable", "files", "project_trust", "default_timeout_seconds", "stop_loop_limit", "max_output_chars"},
+			nil),
+		// mcp.project_trust is deliberately absent here: it is edited in the
+		// MCP servers tab next to the servers it governs (POST
+		// /coddy/mcp/project-trust), not as a settings-document section. It
+		// still round-trips through GET/PUT /coddy/config like httpserver.
+		"skills": objectSchema("Skills", "Slash commands and skill packs discovered from these directories.",
+			map[string]interface{}{
+				"dirs": map[string]interface{}{
+					"type":        "array",
+					"title":       "Skill directories",
+					"description": "Extra skill directories, read after the four default folders and stronger than them. The defaults are always read, lowest priority first: ${HOME}/.agents/skills (shared with every agent, npx skills and npx skillsbd install there), the project's .agents/skills, ${CODDY_HOME}/skills (Coddy's own and installed skills), the project's .coddy/skills; then these entries in their order. A skill found in several directories is taken from the last one in this order, and a directory named twice is read at its last place. ${CODDY_HOME} expands when the file is loaded, ${HOME} and ~ to your home folder, ${CWD} and a relative path against the session's workspace (the folder a new chat picked included).",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+				"project_trust": map[string]interface{}{
+					"type":        "string",
+					"title":       "Project marketplaces",
+					"description": "The project's .coddy/marketplaces.json travels with the checkout. \"ask\": leave its sources and marketplaces out of every sync until each entry is approved for this workspace (the shield of the marketplaces list, or coddy plugin marketplace trust). \"allow\": treat them like your own ~/.coddy/marketplaces.json. \"deny\": never use them; they are listed as switched off. What they install goes to ${CODDY_HOME}/skills; the project's skill folders are not affected.",
+					"enum":        []string{ProjectTrustAsk, ProjectTrustAllow, ProjectTrustDeny},
+				},
+				"auto_discovery": map[string]interface{}{
+					"type":        "boolean",
+					"title":       "Skill auto-discovery",
+					"description": "Let the agent load a matching skill's full instructions on its own (model-driven load_skill tool), instead of only when you type /name. Defaults to on.",
+				},
+			},
+			[]string{"dirs", "project_trust", "auto_discovery"},
+			nil),
+		"memory": objectSchema("Memory", "Optional memory subagent (requires the memory build tag and a provider).",
+			map[string]interface{}{
+				"enable": boolProp("Enabled", "Runs the memory subagent on every user turn (memory build tag)."),
+				"model":  strProp("Memory model", "Logical model the memory subagent runs on; empty uses the session's model."),
+				"fallback_models": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"title":       "Fallback memory models",
+					"description": "Models the memory subagent tries in order when the one before them fails before answering. The session's own model is the last resort whether or not it is listed.",
+				},
+				"dir":                         strProp("Memory root", "Filesystem root for memory markdown; empty uses ${CODDY_HOME}/memory."),
+				"wait_seconds":                intProp("Wait for the report (seconds)", "How long a turn waits for the memory subagent's report before its first model call; 0 never waits (default 20)."),
+				"timeout_seconds":             intProp("Run timeout (seconds)", "Hard limit of one memory run, capped by tools.background.max_timeout_seconds (default 300)."),
+				"keep_runs":                   intProp("Runs kept per session", "Finished memory runs kept in the Tasks panel per session, task record and child transcript alike; 0 keeps all (default 20)."),
+				"recall_max_turns":            intProp("Recall max turns", "Bounds the memory subagent's rounds together with persist_max_turns; the cap is the larger of the two."),
+				"persist_max_turns":           intProp("Persist max turns", "Bounds the memory subagent's rounds together with recall_max_turns; the cap is the larger of the two."),
+				"copilot_max_tokens":          intProp("Max tokens per call", "Completion token cap for the memory model's calls."),
+				"max_search_hits":             intProp("Max search hits", "Maximum snippets returned by memory search tools."),
+				"max_note_chars":              intProp("Note size cap (characters)", "Longest body one saved note may have, in characters; 0 means no cap (default 900)."),
+				"additional_prompt":           strProp("Additional instructions", "Your own instructions for the memory subagent, a section of its system prompt; the main agent never sees them."),
+				"additional_prompt_max_chars": intProp("Additional instructions cap (characters)", "Longer instructions are cut at this many characters, with a warning in the log; 0 means no cap."),
+			},
+			[]string{"enable", "model", "dir", "fallback_models", "additional_prompt", "additional_prompt_max_chars", "wait_seconds", "timeout_seconds", "keep_runs", "recall_max_turns", "persist_max_turns", "copilot_max_tokens", "max_search_hits", "max_note_chars"},
+			nil),
+		"decisions": objectSchema("Command safety (decisions)", "Ask the NeuralDeep decisions API whether a shell command is safe before the permission gate decides: a safe command runs without a prompt, an unsafe one is asked about in every mode, bypass included, and rejected where nobody can answer.",
+			map[string]interface{}{
+				"enable": boolProp("Enabled", "Check run_command and ssh_run_command calls you did not allow explicitly before the permission gate decides: a safe command runs without a prompt, an unsafe one is asked about in every mode, bypass included, and rejected where nobody can answer. The allowlist, a session grant of exactly that command, a hook's allow and commands you approved in a prompt are not checked."),
+				"model": map[string]interface{}{
+					"type":        "string",
+					"title":       "Decisions model",
+					"description": "frida-decisions: encoder pass, up to 512 tokens of command text, ~20 ms per request. clef-flash: up to 8192 tokens, ~150 ms.",
+					"enum":        []string{DecisionsModelFRIDA, DecisionsModelClef},
+				},
+				"threshold": withNumberBounds(numProp("Unsafe threshold",
+					"The probability of the unsafe option at or above which a command counts as unsafe. 0 uses the default (0.5); lower is stricter, higher lets borderline commands through."), 0, 1),
+			},
+			[]string{"enable", "model", "threshold"},
+			nil),
+		"scheduler": objectSchema("Scheduler", "Cron-style scheduled jobs (requires scheduler build tag). A run is a background agent task under the job's own session, the job's run history.",
+			map[string]interface{}{
+				"enable":          boolProp("Enabled", "When true, this process may run the scheduler daemon and REST."),
+				"max_queue":       intProp("Max queue", "Runs in flight across all jobs at once; a due slot past the cap is skipped, a manual run refused."),
+				"timeout":         strProp("Run timeout", "Wall-clock limit of one run, e.g. 30m or 1h30m (the task pool caps it at tools.background.max_timeout_seconds)."),
+				"retain_sessions": intProp("Retain runs", "Finished runs kept per job (task records and transcripts); older ones are removed when a run finishes."),
+				"project_trust": map[string]interface{}{
+					"type":        "string",
+					"title":       "Project jobs",
+					"description": "Jobs in a workspace's .coddy/scheduler travel with the checkout. \"ask\": list them but run nothing until that exact job is approved for this workspace (the shield in the scheduler drawer). \"allow\": run them like your own jobs. \"deny\": never run them.",
+					"enum":        []string{ProjectTrustAsk, ProjectTrustAllow, ProjectTrustDeny},
+				},
+			},
+			[]string{"enable", "project_trust", "max_queue", "timeout", "retain_sessions"},
+			nil),
+		"prompts": objectSchema("Prompts", "Built-in system prompt files relative to dir.",
+			map[string]interface{}{
+				"dir":          strProp("Prompts directory", "Optional override directory for prompt markdown files."),
+				"agent_prompt": strProp("Agent prompt file", "Filename for the main agent system prompt."),
+				"plan_prompt":  strProp("Plan prompt file", "Filename for plan-mode system prompt."),
+				"ask_prompt":   strProp("Ask prompt file", "Filename for ask-mode system prompt."),
+			},
+			[]string{"dir", "agent_prompt", "plan_prompt", "ask_prompt"},
+			nil),
+		"instructions": objectSchema("Instructions", "Files you add to the system prompt as project instructions, after the AGENTS.md and DESIGN.md of the agent home, of the session folder and of the folders a tool enters, which are always read.",
+			map[string]interface{}{
+				"files": map[string]interface{}{
+					"type":        "array",
+					"title":       "Instruction files",
+					"description": "Extra instruction files, appended after the AGENTS.md and DESIGN.md documents in the order listed; empty by default. ${CODDY_HOME}, ${CWD} and a leading ~ expand; an absolute entry is read as it stands, a relative one resolves against the session CWD. A file the prompt already carries is not read twice.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+			},
+			[]string{"files"},
+			nil),
+		"logger": objectSchema("Logger", "Process log level, per-component overrides, outputs, and rotation.",
+			map[string]interface{}{
+				"level": map[string]interface{}{
+					"type":        "string",
+					"title":       "Level",
+					"description": "Minimum severity written to configured outputs.",
+					"enum":        []string{"debug", "info", "warn", "error", "warning"},
+				},
+				"levels": map[string]interface{}{
+					"type":  "array",
+					"title": "Component levels",
+					"description": "Raise or lower one subsystem on its own. A parent name covers what is " +
+						"nested under it (gateway reaches gateway.telegram), and the longest match wins.",
+					"items": objectSchema("", "",
+						map[string]interface{}{
+							"component": strProp("Component", "Dotted name, for example gateway.telegram."),
+							"level": map[string]interface{}{
+								"type":        "string",
+								"title":       "Level",
+								"description": "Minimum severity for this component.",
+								"enum":        []string{"debug", "info", "warn", "error", "warning"},
+								// Raising a subsystem is the reason to add a row,
+								// so a new one starts there and only the component
+								// name is left to fill in.
+								"default": LogLevelDebug,
+							},
+						},
+						[]string{"component", "level"},
+						[]string{"component", "level"}),
+				},
+				"outputs": map[string]interface{}{
+					"type":        "array",
+					"title":       "Outputs",
+					"description": "Where log lines are written.",
+					"items": map[string]interface{}{
+						"type": "string",
+						"enum": []string{"stdout", "stderr", "file"},
+					},
+				},
+				"file": strProp("Log file path", "Destination file when outputs include file."),
+				"format": map[string]interface{}{
+					"type":        "string",
+					"title":       "Format",
+					"description": "text for human logs; json for structured logs.",
+					"enum":        []string{"text", "json"},
+				},
+				"rotation": objectSchema("Rotation", "Size-based rotation when logging to a file.",
+					map[string]interface{}{
+						"max_size_mb": intProp("Max file size (MB)", "Rotate after the file reaches this size; 0 uses logger defaults."),
+						"max_files":   intProp("Max files", "How many rotated segments to retain; 0 uses logger defaults."),
+					},
+					[]string{"max_size_mb", "max_files"},
+					nil),
+			},
+			[]string{"level", "levels", "outputs", "file", "format", "rotation"},
+			nil),
+		"browser": objectSchema("Browser", "Coddy for Browser: the extension connects to this server, lets the chats work in your browser through the browser tool, and shows the web UI in its side panel. It takes effect only in a binary built with the browser tag.",
+			map[string]interface{}{
+				"enable":       boolProp("Enabled", "Offer the browser tool to the chats, and accept the extension when a key is set."),
+				"token":        secretProp("Extension key", "At least 32 characters, entered in the extension. Write-only: leave empty to keep the current key.", "token_configured"),
+				"serve_remote": boolProp("Serve to other Coddy processes", "Let a console or an editor on this machine and the nodes of the swarm drive the browsers connected here, through /coddy/browser/v1 with this server's API credential. The extension asks you before the first action of each such chat."),
+				"remotes": map[string]interface{}{
+					"type":        "array",
+					"title":       "Browsers of other servers",
+					"description": "Coddy servers whose browsers the chats of this one may use: a name of httpserver.remotes, or an address such as a node mount of a swarm relay. That server needs browser.serve_remote.",
+					"items":       map[string]interface{}{"type": "string"},
+				},
+			}, []string{"enable", "token", "serve_remote", "remotes"}, nil),
+		"metrics": objectSchema("Metrics", "Prometheus exporter on a port of its own. It takes effect only in a binary built with the metrics tag.",
+			map[string]interface{}{
+				"enable": boolProp("Enabled", "Serve /metrics from this process."),
+				"host":   strProp("Listen host", "Address to bind. Empty falls back to 127.0.0.1, which only this machine can reach."),
+				"port":   intProp("Listen port", "Port to bind. 0 falls back to 12347."),
+				"token": secretProp("Token", "Bearer credential a scrape must present. Write-only: leave it empty to keep the one set. With none set the exporter asks for no credential.",
+					"token_configured"),
+			},
+			[]string{"enable", "host", "port", "token"},
+			nil),
+		"sessions": objectSchema("Sessions", "Where persisted chat bundles are stored.",
+			map[string]interface{}{
+				"dir": strProp("Sessions directory", "Override sessions root; empty resolves under CODDY_HOME."),
+			},
+			[]string{"dir"},
+			nil),
+		"compaction": objectSchema("Context compaction", "Summarize older conversation history so long sessions keep fitting the model context window.",
+			map[string]interface{}{
+				"enable":            boolProp("Enabled", "Master switch for compaction (manual command and automatic trigger). Defaults to true."),
+				"auto_enable":       boolProp("Enabled", "Compact on its own: fold older turns at the threshold, or the earlier steps of a long turn when there is no earlier turn, and compact and ask again once when the provider refuses a request as larger than its context window. Off keeps manual compaction available. Defaults to true."),
+				"threshold_percent": intProp("Threshold (%)", "Compact when the estimated context reaches this percent of the model's context window (1..100, default 80): its max_context_tokens, else the window its provider reports, else 128000."),
+				"keep_recent_turns": intProp("Keep recent turns", "How many most recent user turns stay verbatim after compaction (default 2; 0 summarizes everything). With no more turns than that, automatic compaction still folds the older ones and keeps the prompt being answered."),
+				"model":             strProp("Summarizer model", "Optional models[].model for the summarization call; empty uses the session model."),
+				"fallback_models": map[string]interface{}{
+					"type":        "array",
+					"items":       map[string]interface{}{"type": "string"},
+					"title":       "Fallback summarizer models",
+					"description": "Summarizer models tried in order when the one before them fails. The session's own model is the last resort whether or not it is listed here.",
+				},
+				"result_eviction": objectSchema("Tool result eviction",
+					"Collapse superseded tool results (read pages, grep dumps, and the listings of glob, print_tree, websearch and webfetch) to placeholders when building the LLM request; the persisted transcript is untouched. Read and grep results survive when marked (keep_result / keep:true) or among the most recent; listings survive within the latest three steps.",
+					map[string]interface{}{
+						"enable":           boolProp("Enabled", "Master switch for tool result eviction. Defaults to true."),
+						"keep_recent":      intProp("Keep recent results", "How many most recent read and grep results stay intact as a working window (default 2 - enough to hold a read and a grep at once; 0 keeps none)."),
+						"min_result_bytes": intProp("Min result bytes", "Results at or below this size are never evicted (default 2000; 0 makes every result a candidate)."),
+						"start_percent":    intProp("Start at (%)", "Evict only once the estimated context reaches this percent of the model's context window (default 50; 0 evicts from the first result). Below it the history is sent untouched so the provider's prompt cache holds. Read and grep results of a model without max_context_tokens are evicted from the first result."),
+					},
+					[]string{"enable", "keep_recent", "min_result_bytes", "start_percent"},
+					nil),
+			},
+			[]string{"enable", "auto_enable", "threshold_percent", "keep_recent_turns", "model", "result_eviction"},
+			nil),
+		"gateways": objectSchema("Messenger gateways", "Telegram, Pachca and MAX bots (require the gateway build tag, or gateway.telegram / gateway.pachca / gateway.max for one of them).",
+			map[string]interface{}{
+				"telegram": objectSchema("Telegram", "Telegram bot adapter settings.", telegramProps,
+					[]string{"enable", "token", "rich_messages", "proxy", "admins", "default_access", "default_isolation", "user_groups", "chats", "mini_app"},
+					nil),
+				"pachca": objectSchema("Pachca", "Pachca integration bot settings.", pachcaProps,
+					[]string{"enable", "token", "proxy", "poll_interval_seconds", "admins", "default_access", "default_isolation", "user_groups", "chats"},
+					nil),
+				"max": objectSchema("MAX", "MAX messenger bot settings.", maxProps,
+					[]string{"enable", "token", "proxy", "ca_file", "poll_timeout_seconds", "poll_interval_seconds", "admins", "default_access", "default_isolation", "user_groups", "chats"},
+					nil),
+			},
+			[]string{"telegram", "pachca", "max"},
+			nil),
+	}
+
+	// The order of the Settings tabs, grouped by meaning: where the models come
+	// from, then the loop that runs them (context compaction and the memory
+	// copilot follow the ReAct loop: the same loop deciding what to send the
+	// model), then what the agent can do (tools, MCP servers, skills,
+	// subagents, hooks), then what runs it without a person at the composer
+	// (the scheduler, the messenger gateways), and last the operation of the
+	// process (the logger, the metrics exporter and the browser extension, then prompts and
+	// instructions, which the web UI folds into one System tab). The sessions
+	// key belongs to the Sessions tab.
+	rootOrder := []string{
+		"providers", "models", "toolsets",
+		"agent", "supervisor", "compaction", "memory", "decisions",
+		"tools", "skills", "subagents", "hooks",
+		"scheduler", "gateways",
+		"logger", "metrics", "browser", "sessions", "prompts", "instructions",
+	}
+
+	doc := map[string]interface{}{
+		"$schema":                "https://json-schema.org/draft/2020-12/schema",
+		"title":                  "Coddy config",
+		"description":            "Runtime configuration edited via the Settings UI. Secrets are included in GET responses.",
+		"type":                   "object",
+		"properties":             props,
+		"additionalProperties":   false,
+		"x-coddy-property-order": toIfaceOrder(rootOrder),
+	}
+
+	attachSchemaDefaultsFromExample(doc, SchemaExampleConfigJSON())
+	return doc
+}
+
+func toIfaceOrder(keys []string) []interface{} {
+	out := make([]interface{}, len(keys))
+	for i, k := range keys {
+		out[i] = k
+	}
+	return out
+}
+
+// uiHiddenConfigKeys are ConfigJSON keys the Settings form must not render as
+// sections of its own. They still round-trip through GET/PUT /coddy/config,
+// so hiding one here never drops it from the saved document.
+//
+//	httpserver - the surface the UI itself is served from; editing it there
+//	             would let the page cut its own connection.
+//	mcp        - project_trust is edited in the MCP servers tab (POST
+//	             /coddy/mcp/project-trust), next to the servers the policy
+//	             governs; idle_timeout_seconds is set in the file and survives
+//	             every save of this form.
+//	swarm      - a relay's own deployment: bind address, credentials for a whole
+//	             fleet, and the parents this process joins. It is set in the file
+//	             or on the command line, not from a page one of its nodes serves.
+//	rules      - project rule discovery is a workspace concern; the Settings form
+//	             edits the user-global file, where it rarely needs touching.
+//	ui         - toggles the SPA the page is served from; like httpserver, the
+//	             page cannot switch itself off.
+//	revision   - not a setting: it names the configuration a GET document was
+//	             read from (ConfigJSON.Revision) and travels back with the PUT.
+var uiHiddenConfigKeys = map[string]struct{}{
+	"httpserver": {},
+	"mcp":        {},
+	"swarm":      {},
+	"rules":      {},
+	"ui":         {},
+	"revision":   {},
+}
+
+// UISchemaCoversConfigJSONFields checks that UI schema properties match ConfigJSON
+// except for uiHiddenConfigKeys.
+func UISchemaCoversConfigJSONFields() error {
+	doc := UISchemaMap()
+	props, ok := doc["properties"].(map[string]interface{})
+	if !ok {
+		return fmt.Errorf("schema missing properties")
+	}
+	t := reflect.TypeOf(ConfigJSON{})
+	want := make(map[string]struct{}, t.NumField())
+	for i := 0; i < t.NumField(); i++ {
+		tag := t.Field(i).Tag.Get("json")
+		name := tag
+		if c := strings.IndexByte(tag, ','); c >= 0 {
+			name = tag[:c]
+		}
+		if name == "" || name == "-" {
+			continue
+		}
+		if _, hidden := uiHiddenConfigKeys[name]; hidden {
+			continue
+		}
+		want[name] = struct{}{}
+	}
+	for k := range want {
+		if _, ok := props[k]; !ok {
+			return fmt.Errorf("schema missing property %q", k)
+		}
+	}
+	for k := range props {
+		if _, hidden := uiHiddenConfigKeys[k]; hidden {
+			return fmt.Errorf("schema must not expose %q in UI", k)
+		}
+		if _, ok := want[k]; !ok {
+			return fmt.Errorf("schema has unknown property %q", k)
+		}
+	}
+	return nil
+}

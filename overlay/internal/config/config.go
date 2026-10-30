@@ -1,0 +1,284 @@
+package config
+
+import (
+	"errors"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
+)
+
+// LoadFromCLI resolves paths, optionally falls back to $CWD/config.yaml when $CODDY_HOME/config.yaml is missing, and loads YAML.
+func LoadFromCLI(cli CLIPaths) (*Config, error) {
+	paths, err := resolveConfigFile(cli)
+	if err != nil {
+		return nil, err
+	}
+	return readConfigFile(paths, strings.TrimSpace(cli.Config) != "")
+}
+
+// resolveConfigFile resolves the paths and picks the file the loader reads: an
+// explicit --config, else <home>/config.yaml, else <cwd>/config.yaml when the
+// home has none. <home>/.env is loaded first so ${VAR} references in the file
+// see its values; the process environment always takes precedence over .env.
+// Check uses the same resolution, so -t reports on the file a start would load.
+func resolveConfigFile(cli CLIPaths) (Paths, error) {
+	paths, err := Resolve(cli)
+	if err != nil {
+		return Paths{}, err
+	}
+	loadDotEnv(paths.Home)
+	if strings.TrimSpace(cli.Config) == "" {
+		if _, err := os.Stat(paths.ConfigPath); errors.Is(err, os.ErrNotExist) {
+			cwdCfg := filepath.Join(paths.CWD, defaultConfigName)
+			if _, err := os.Stat(cwdCfg); err == nil {
+				paths.ConfigPath = cwdCfg
+				paths.ConfigFromWorkspace = true
+			}
+		}
+	}
+	return paths, nil
+}
+
+// Load reads config from the given path, or resolves $CODDY_HOME/config.yaml (and optional $CWD/config.yaml).
+// If path is non-empty, that file must exist. If path is empty, resolution uses env and $CODDY_HOME/config.yaml.
+func Load(path string) (*Config, error) {
+	return LoadFromCLI(CLIPaths{Config: strings.TrimSpace(path)})
+}
+
+// LoadWithPaths loads YAML from paths.ConfigPath (explicit path semantics: file must exist).
+func LoadWithPaths(paths Paths) (*Config, error) {
+	return readConfigFile(paths, true)
+}
+
+func readConfigFile(paths Paths, explicitFile bool) (*Config, error) {
+	data, err := os.ReadFile(paths.ConfigPath)
+	if err != nil {
+		if explicitFile {
+			return nil, fmt.Errorf("read config %s: %w", paths.ConfigPath, err)
+		}
+		if errors.Is(err, os.ErrNotExist) {
+			cfg := &Config{Paths: paths}
+			applyDefaults(cfg)
+			if err := validateSubconfigs(cfg); err != nil {
+				return nil, err
+			}
+			return cfg, nil
+		}
+		return nil, fmt.Errorf("read config %s: %w", paths.ConfigPath, err)
+	}
+
+	if enc := utf16Encoding(data); enc != "" {
+		return nil, fmt.Errorf("config %s: the file is %s text, not UTF-8; %s", paths.ConfigPath, enc, utf16Fix)
+	}
+	// Keys that left config.yaml move into their own files before anything
+	// reads the text (legacy_keys.go).
+	data = migrateLegacyKeys(paths, data)
+
+	originalData := append([]byte(nil), data...)
+	expanded := expandConfigBody(string(data), paths)
+
+	cfg, err := parseValidateYAMLBytes(expanded, paths)
+	if err != nil {
+		rec, rerr := tryRecoverFromBackup(paths)
+		if rerr == nil && rec != nil {
+			return rec, nil
+		}
+		return nil, fmt.Errorf("config %s: %w", paths.ConfigPath, err)
+	}
+	_ = WriteBackup(paths.ConfigPath, originalData)
+	return cfg, nil
+}
+
+func validateSubconfigs(cfg *Config) error {
+	if err := cfg.Browser.Validate(); err != nil {
+		return err
+	}
+	if cfg.Browser.Serves() && !cfg.HTTPServer.IsEnabled() {
+		return fmt.Errorf("browser.token needs httpserver.enable: Coddy for Browser connects to the HTTP server")
+	}
+	if err := cfg.Logger.Validate(); err != nil {
+		return fmt.Errorf("logger: %w", err)
+	}
+	if err := cfg.Prompts.Validate(); err != nil {
+		return fmt.Errorf("prompts: %w", err)
+	}
+	if err := cfg.Instructions.Validate(); err != nil {
+		return fmt.Errorf("instructions: %w", err)
+	}
+	if err := cfg.Agent.Validate(); err != nil {
+		return fmt.Errorf("agent: %w", err)
+	}
+	if err := cfg.Skills.Validate(); err != nil {
+		return fmt.Errorf("skills: %w", err)
+	}
+	if err := cfg.Rules.Validate(); err != nil {
+		return fmt.Errorf("rules: %w", err)
+	}
+	cfg.Swarm.Normalize()
+	cfg.Metrics.Normalize()
+	if err := cfg.Swarm.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.Metrics.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.MCP.Validate(); err != nil {
+		return fmt.Errorf("mcp: %w", err)
+	}
+	if err := cfg.Subagents.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.Hooks.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.Tools.Validate(); err != nil {
+		return fmt.Errorf("tools: %w", err)
+	}
+	if err := cfg.Sessions.Validate(); err != nil {
+		return fmt.Errorf("sessions: %w", err)
+	}
+	if err := cfg.Compaction.Validate(); err != nil {
+		return fmt.Errorf("compaction: %w", err)
+	}
+	if err := cfg.Memory.Validate(cfg); err != nil {
+		return fmt.Errorf("memory: %w", err)
+	}
+	if err := cfg.Decisions.Validate(); err != nil {
+		return fmt.Errorf("decisions: %w", err)
+	}
+	if err := cfg.Scheduler.Validate(cfg); err != nil {
+		return fmt.Errorf("scheduler: %w", err)
+	}
+	cfg.HTTPServer.Normalize()
+	cfg.Gateways.Telegram.Normalize()
+	if err := cfg.Gateways.Telegram.Validate(); err != nil {
+		// The error already names its key under gateways.telegram.
+		return err
+	}
+	cfg.Gateways.Pachca.Normalize()
+	if err := cfg.Gateways.Pachca.Validate(); err != nil {
+		return err
+	}
+	cfg.Gateways.Max.Normalize()
+	if err := cfg.Gateways.Max.Validate(); err != nil {
+		return err
+	}
+	if err := cfg.HTTPServer.Validate(); err != nil {
+		return fmt.Errorf("httpserver: %w", err)
+	}
+	if err := cfg.ValidateModelsProvidersAndAgent(); err != nil {
+		return err
+	}
+	if err := cfg.Supervisor.Validate(cfg); err != nil {
+		return err
+	}
+	return nil
+}
+
+func applyDefaults(cfg *Config) {
+	p := cfg.Paths
+
+	cfg.Agent.ApplyDefaults()
+	cfg.Instructions.ApplyDefaults()
+	if cfg.Logger.Level == "" {
+		cfg.Logger.Level = LogLevelInfo
+	}
+	// Legacy: logger.file without outputs used to be stored but unused; route to stderr + file.
+	if strings.TrimSpace(cfg.Logger.File) != "" && len(cfg.Logger.Outputs) == 0 {
+		cfg.Logger.Outputs = []string{LogOutputStderr, LogOutputFile}
+	}
+	// The log file belongs to the process, so ${CWD} in it is the default
+	// working directory (per-session placeholders are left alone by the body
+	// expansion, see expandConfigBody).
+	if f := strings.TrimSpace(cfg.Logger.File); f != "" {
+		cfg.Logger.File = filepath.Clean(ExpandPathVars(f, p))
+	}
+
+	if d := strings.TrimSpace(cfg.Sessions.Dir); d != "" {
+		cfg.Sessions.Dir = filepath.Clean(ExpandPathVars(d, p))
+	} else {
+		cfg.Sessions.Dir = ""
+	}
+
+	cfg.Compaction.Normalize()
+	cfg.Compaction.ApplyDefaults()
+
+	cfg.Skills.ApplyDefaults(p.Home, func(s string) string {
+		return ExpandCODDYHomeOnly(s, p)
+	})
+	cfg.Rules.ApplyDefaults()
+	cfg.Subagents.ApplyDefaults(p)
+	cfg.Hooks.ApplyDefaults(p)
+
+	cfg.Memory.Normalize(p)
+	cfg.Memory.ApplyDefaults()
+
+	cfg.Decisions.Normalize()
+	cfg.Decisions.ApplyDefaults()
+
+	cfg.Scheduler.Normalize(p)
+	cfg.Scheduler.ApplyDefaults(p)
+
+	cfg.Gateways.Telegram.Normalize()
+	cfg.Gateways.Telegram.ApplyDefaults()
+	cfg.Gateways.Pachca.Normalize()
+	cfg.Gateways.Pachca.ApplyDefaults()
+	cfg.Gateways.Max.Normalize()
+	cfg.Gateways.Max.ApplyDefaults()
+
+	cfg.HTTPServer.Normalize()
+
+	if len(cfg.Providers) == 0 && len(cfg.Models) == 0 {
+		if key := os.Getenv("OPENAI_API_KEY"); key != "" {
+			cfg.Providers = []ProviderConfig{{Name: "openai", Type: "openai", APIKey: key}}
+			cfg.Models = []ModelEntry{{
+				Model:       "openai/gpt-5.4",
+				MaxTokens:   16384,
+				Temperature: 0.2,
+			}}
+			cfg.Agent.Model = "openai/gpt-5.4"
+		} else if key := os.Getenv("ANTHROPIC_API_KEY"); key != "" {
+			cfg.Providers = []ProviderConfig{{Name: "anthropic", Type: "anthropic", APIKey: key}}
+			cfg.Models = []ModelEntry{{
+				Model:       "anthropic/claude-sonnet-4-6",
+				MaxTokens:   16384,
+				Temperature: 0.2,
+			}}
+			cfg.Agent.Model = "anthropic/claude-sonnet-4-6"
+		}
+	}
+}
+
+// ResolvedSessionsRoot returns the filesystem root for persisted sessions.
+func (c *Config) ResolvedSessionsRoot() string {
+	if d := strings.TrimSpace(c.Sessions.Dir); d != "" {
+		return filepath.Clean(d)
+	}
+	if c.Paths.Home != "" {
+		return filepath.Join(c.Paths.Home, "sessions")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return filepath.Join(".coddy", "sessions")
+	}
+	return filepath.Join(home, ".coddy", "sessions")
+}
+
+// ExpandCWD replaces ${CWD} in s, then expands ~, using the given session or process cwd.
+func ExpandCWD(s, cwd string) string {
+	s = strings.ReplaceAll(s, "${CWD}", cwd)
+	return expandHome(s)
+}
+
+// expandHome expands a leading ~ to the user's home directory.
+func expandHome(path string) string {
+	if !strings.HasPrefix(path, "~") {
+		return path
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return path
+	}
+	return filepath.Join(home, path[1:])
+}

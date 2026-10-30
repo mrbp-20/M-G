@@ -1,0 +1,284 @@
+package session
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
+	"syscall"
+	"testing"
+
+	"github.com/EvilFreelancer/coddy-agent/internal/llm"
+)
+
+func TestCaptureArtifactDeduplicatesAndRejectsSymlink(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	sessionDir := filepath.Join(root, "session")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(workspace, "report.txt")
+	if err := os.WriteFile(file, []byte("immutable bytes"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	first, err := CaptureArtifact(sessionDir, workspace, "report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	second, err := CaptureArtifact(sessionDir, workspace, "report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.ID != second.ID || first.SHA256 != second.SHA256 {
+		t.Fatalf("dedup = %#v, %#v", first, second)
+	}
+	canonicalFile, err := filepath.EvalSymlinks(file)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.SourcePath != canonicalFile || first.SourceRelativePath != "report.txt" {
+		t.Fatalf("source metadata = %#v, want absolute %q and relative report.txt", first, file)
+	}
+	if got, err := os.ReadFile(ArtifactPath(sessionDir, first.SHA256)); err != nil || string(got) != "immutable bytes" {
+		t.Fatalf("artifact = %q, %v", got, err)
+	}
+
+	t.Run("symlink source", func(t *testing.T) {
+		artifactTestSymlink(t, file, filepath.Join(workspace, "linked.txt"))
+		if _, err := CaptureArtifact(sessionDir, workspace, "linked.txt"); err == nil {
+			t.Fatal("symlink source was accepted")
+		}
+	})
+}
+
+func TestAssistantPlacesVerifiedArtifactAndKeepsToolFallbackUntilThen(t *testing.T) {
+	artifact := llm.Artifact{ID: "artifact-1", Name: "report.txt"}
+	st := &State{}
+	st.AddMessage(llm.Message{Role: llm.RoleTool, ToolCallID: "share", Artifacts: []llm.Artifact{artifact}})
+	if got := st.GetMessages()[0].Artifacts; len(got) != 1 || got[0].ID != artifact.ID {
+		t.Fatalf("tool fallback = %#v", got)
+	}
+
+	st.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: "The report is ready."})
+	msgs := st.GetMessages()
+	answer := msgs[1]
+	if len(answer.Artifacts) != 1 || answer.Artifacts[0].ID != artifact.ID {
+		t.Fatalf("assistant artifacts = %#v", answer.Artifacts)
+	}
+	if want := `<coddy_file id="artifact-1"/>`; answer.Content != "The report is ready.\n\n"+want {
+		t.Fatalf("assistant content = %q, want server marker %q", answer.Content, want)
+	}
+}
+
+func TestMarkerOnlyAssistantResponseKeepsArtifactFallback(t *testing.T) {
+	artifact := llm.Artifact{ID: "artifact-1", Name: "report.txt"}
+	st := &State{}
+	st.AddMessage(llm.Message{Role: llm.RoleTool, ToolCallID: "share", Artifacts: []llm.Artifact{artifact}})
+	st.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: `<coddy_file id="hallucinated"/>`})
+	st.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: "The real answer."})
+	msgs := st.GetMessages()
+	if len(msgs[1].Artifacts) != 0 || msgs[1].Content != "" {
+		t.Fatalf("marker-only response became an artifact placement: %#v", msgs[1])
+	}
+	if len(msgs[2].Artifacts) != 1 || msgs[2].Artifacts[0].ID != artifact.ID {
+		t.Fatalf("real answer did not place fallback artifact: %#v", msgs[2])
+	}
+}
+
+func TestArtifactPlacementPersistsAcrossReload(t *testing.T) {
+	root := t.TempDir()
+	st := &State{ID: "sess_artifact_placement", CWD: root, SessionDir: filepath.Join(root, "sessions", "sess_artifact_placement")}
+	if err := os.MkdirAll(st.SessionDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	artifact := llm.Artifact{ID: "artifact-1", Name: "report.txt", SourcePath: filepath.Join(root, "report.txt"), SourceRelativePath: "report.txt"}
+	st.AddMessage(llm.Message{Role: llm.RoleTool, ToolCallID: "share", Artifacts: []llm.Artifact{artifact}})
+	st.AddMessage(llm.Message{Role: llm.RoleAssistant, Content: "Ready."})
+	store := &FileStore{Root: filepath.Join(root, "sessions")}
+	if err := store.Save(st); err != nil {
+		t.Fatal(err)
+	}
+	snap, err := store.ReadSnapshot(st.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	answer := snap.Messages[1]
+	if len(answer.Artifacts) != 1 || answer.Artifacts[0].SourceRelativePath != "report.txt" || !strings.Contains(answer.Content, `<coddy_file id="artifact-1"/>`) {
+		t.Fatalf("reloaded artifact placement = %#v", answer)
+	}
+}
+
+func TestArtifactSourcePathReportsRemovedSource(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(workspace, "report.txt")
+	if err := os.WriteFile(file, []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	sessionDir := filepath.Join(root, "session")
+	a, err := CaptureArtifact(sessionDir, workspace, "report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := ArtifactSourcePath(sessionDir, workspace, a.ID); !errors.Is(err, ErrArtifactSourceUnavailable) {
+		t.Fatalf("source error = %v, want unavailable", err)
+	}
+}
+
+// The card of a shared file opens the file it was copied from, so the state
+// is decided against the chat's workspace as it is now.
+func TestArtifactSourceStateFollowsTheWorkspace(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	if err := os.MkdirAll(filepath.Join(workspace, "reports"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(workspace, "reports", "report.txt")
+	if err := os.WriteFile(file, []byte("report"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := CaptureArtifact(filepath.Join(root, "session"), workspace, filepath.Join("reports", "report.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	other := filepath.Join(root, "other")
+	if err := os.Mkdir(other, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, tc := range []struct {
+		name, cwd, source, rel, want string
+	}{
+		{"in the workspace", workspace, a.SourcePath, a.SourceRelativePath, ArtifactSourcePresent},
+		{"the chat moved to another folder", other, a.SourcePath, a.SourceRelativePath, ArtifactSourceUnavailable},
+		{"the chat's folder is gone", filepath.Join(root, "gone"), a.SourcePath, a.SourceRelativePath, ArtifactSourceUnavailable},
+		{"no source recorded", workspace, "", "", ArtifactSourceUnavailable},
+		{"a relative path that does not name the source", workspace, a.SourcePath, "report.txt", ArtifactSourceUnavailable},
+	} {
+		if got := ArtifactSourceState(tc.cwd, tc.source, tc.rel); got != tc.want {
+			t.Errorf("%s: state %q, want %q", tc.name, got, tc.want)
+		}
+	}
+	if err := os.Remove(file); err != nil {
+		t.Fatal(err)
+	}
+	if got := ArtifactSourceState(workspace, a.SourcePath, a.SourceRelativePath); got != ArtifactSourceDeleted {
+		t.Fatalf("removed source: state %q, want %q", got, ArtifactSourceDeleted)
+	}
+	// A folder where the file was is not the file the card names.
+	if err := os.Mkdir(file, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := ArtifactSourceState(workspace, a.SourcePath, a.SourceRelativePath); got != ArtifactSourceDeleted {
+		t.Fatalf("source replaced by a folder: state %q, want %q", got, ArtifactSourceDeleted)
+	}
+	// The folder that held it went with it.
+	if err := os.RemoveAll(filepath.Join(workspace, "reports")); err != nil {
+		t.Fatal(err)
+	}
+	if got := ArtifactSourceState(workspace, a.SourcePath, a.SourceRelativePath); got != ArtifactSourceDeleted {
+		t.Fatalf("source folder removed: state %q, want %q", got, ArtifactSourceDeleted)
+	}
+}
+
+func TestReadArtifactRejectsTamperedAndSymlinkedContent(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	sessionDir := filepath.Join(root, "session")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "report.txt"), []byte("original"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	a, err := CaptureArtifact(sessionDir, workspace, "report.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := ArtifactPath(sessionDir, a.SHA256)
+	if err := os.Chmod(path, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("tampered"), 0o400); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := ReadArtifact(sessionDir, a.ID); err != nil {
+		t.Fatalf("ReadArtifact should leave digest verification to the HTTP stream: %v", err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	t.Run("symlink content", func(t *testing.T) {
+		artifactTestSymlink(t, filepath.Join(workspace, "report.txt"), path)
+		if _, _, err := ReadArtifact(sessionDir, a.ID); err == nil {
+			t.Fatal("symlinked artifact was accepted")
+		}
+	})
+}
+
+func artifactTestSymlink(t *testing.T, target, link string) {
+	t.Helper()
+	if err := os.Symlink(target, link); err != nil {
+		if runtime.GOOS == "windows" && errors.Is(err, syscall.Errno(1314)) {
+			t.Skip("creating symlinks requires Windows Developer Mode or SeCreateSymbolicLinkPrivilege")
+		}
+		t.Fatal(err)
+	}
+}
+
+// The same bytes shared again under another name is what a chat sees when a file
+// it already received is sent back: the record has to follow the latest name,
+// never hand out the name of the first share.
+func TestCaptureArtifactTakesTheNameOfTheLatestShare(t *testing.T) {
+	root := t.TempDir()
+	workspace := filepath.Join(root, "workspace")
+	sessionDir := filepath.Join(root, "session")
+	if err := os.Mkdir(workspace, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	content := []byte("the very same video")
+	if err := os.WriteFile(filepath.Join(workspace, "video-ot-bota.mp4"), content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	first, err := CaptureArtifact(sessionDir, workspace, "video-ot-bota.mp4")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(filepath.Join(workspace, "video-ot-bota.mp4")); err != nil {
+		t.Fatal(err)
+	}
+	second := filepath.Join(workspace, "file (2).f4v")
+	if err := os.WriteFile(second, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	again, err := CaptureArtifact(sessionDir, workspace, "file (2).f4v")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.ID != first.ID || again.SHA256 != first.SHA256 {
+		t.Fatalf("the same bytes took another record: %#v, %#v", first, again)
+	}
+	canonical, err := filepath.EvalSymlinks(second)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Name != "file (2).f4v" || again.SourcePath != canonical || again.SourceRelativePath != "file (2).f4v" {
+		t.Fatalf("the second share kept the first name: %#v", again)
+	}
+	stored, _, err := ReadArtifact(sessionDir, again.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "file (2).f4v" || stored.SourceRelativePath != "file (2).f4v" {
+		t.Fatalf("the stored record kept the first name: %#v", stored)
+	}
+}

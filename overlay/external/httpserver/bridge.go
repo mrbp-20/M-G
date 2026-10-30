@@ -1,0 +1,659 @@
+//go:build http
+
+package httpserver
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"io"
+	"net/http"
+	"strings"
+	"sync"
+	"time"
+
+	"github.com/EvilFreelancer/coddy-agent/internal/acp"
+	"github.com/EvilFreelancer/coddy-agent/internal/config"
+	"github.com/EvilFreelancer/coddy-agent/internal/llm"
+	"github.com/EvilFreelancer/coddy-agent/internal/permission"
+	"github.com/EvilFreelancer/coddy-agent/internal/session"
+)
+
+// Sender implements acp.UpdateSender for HTTP (streaming SSE or silent non-stream).
+//
+// Emitting frames and being able to answer a prompt are separate capabilities, so they
+// are separate fields. A sender may publish the whole SSE frame sequence to a relay while
+// no interactive client owns the request: watchers see the turn, but permission and
+// question requests still resolve the way they do for a silent non-stream call, because
+// the caller that started the turn is not reading anything and can never answer.
+type Sender struct {
+	cfg *config.Config
+
+	mu sync.Mutex
+	// emit is true when frames are written to w at all.
+	emit bool
+	// interactive is true when a client is reading the response and can answer a
+	// permission or question request.
+	interactive bool
+	// asksPermission makes a relay sender ask a permission prompt the way an
+	// interactive one does, questions aside: the woken turn's sender
+	// (NewWakeRelaySender).
+	asksPermission  bool
+	w               io.Writer
+	flusher         http.Flusher
+	chatID          string
+	created         int64
+	model           string
+	sessionDir      string
+	questionPending func(sessionID string, pending bool)
+	// extra is where a mirror of this turn publishes it - the messenger chats
+	// bound to the session (chat_mirror.go). Nil when nothing mirrors, and its
+	// failures are its own: a chat that cannot take the turn does not break the
+	// browser's.
+	extra acp.UpdateSender
+	// lastWrite stamps the most recent frame so the idle keepalive knows whether the
+	// stream has gone quiet. Guarded by mu, like every other write to w.
+	lastWrite time.Time
+	usage     completionUsage
+}
+
+// idleKeepaliveInterval is how long a streaming response may stay silent before a
+// comment frame is sent. It has to stay well under the idle timeout of the proxies
+// that sit in front of coddy in practice (nginx proxy_read_timeout defaults to 60s,
+// Cloudflare cuts at ~100s), because a turn on a model configured with stream: false
+// produces no frames at all until the whole completion is generated.
+const idleKeepaliveInterval = 15 * time.Second
+
+// flushLocked flushes the writer and records the moment. Callers hold mu.
+func (s *Sender) flushLocked() {
+	s.lastWrite = time.Now()
+	if s.flusher != nil {
+		s.flusher.Flush()
+	}
+}
+
+// StartIdleKeepalive writes an SSE comment frame whenever the stream has been silent
+// for idleKeepaliveInterval, and returns the function that stops it. Comment frames
+// carry no data, so every SSE parser - the SPA reader, EventSource, OpenAI clients -
+// skips them; what they do is keep the TCP connection and the proxies in front of it
+// from treating a long blocking generation as a dead stream.
+//
+// The returned stop function is the only thing that ends it. It is deliberately not
+// bound to the request context: a streamed turn detaches from its request, so the
+// client that started it can disconnect while the turn keeps publishing to the
+// composer relay - and the watchers reading that relay are exactly who still needs
+// the stream held open.
+//
+// Safe to call on a silent (non-emitting) sender: it then does nothing.
+func (s *Sender) StartIdleKeepalive() func() {
+	return s.startIdleKeepalive(idleKeepaliveInterval)
+}
+
+func (s *Sender) startIdleKeepalive(interval time.Duration) func() {
+	if !s.emit || s.w == nil || interval <= 0 {
+		return func() {}
+	}
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	var once sync.Once
+	// stop waits for the goroutine to leave any write in progress: the caller is
+	// about to let the HTTP handler return, and writing to a ResponseWriter after
+	// that is not allowed.
+	stop := func() {
+		once.Do(func() { close(done) })
+		<-finished
+	}
+	s.mu.Lock()
+	s.lastWrite = time.Now()
+	s.mu.Unlock()
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(interval / 3)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				s.mu.Lock()
+				if time.Since(s.lastWrite) >= interval {
+					if _, err := io.WriteString(s.w, ": keepalive\n\n"); err == nil {
+						s.flushLocked()
+					}
+				}
+				s.mu.Unlock()
+			}
+		}
+	}()
+	return stop
+}
+
+// NewSender creates a bridge for an HTTP response. Pass w=nil when stream is false.
+//
+// w is an io.Writer rather than an http.ResponseWriter so a relay can be a sink too; a
+// writer that also implements http.Flusher is flushed after every frame.
+func NewSender(cfg *config.Config, w io.Writer, stream bool, model string) *Sender {
+	s := &Sender{
+		cfg:         cfg,
+		emit:        stream,
+		interactive: stream,
+		w:           w,
+		chatID:      newChatID(),
+		created:     time.Now().Unix(),
+		model:       model,
+	}
+	if w != nil {
+		if f, ok := w.(http.Flusher); ok {
+			s.flusher = f
+		}
+	}
+	return s
+}
+
+// NewRelaySender creates a bridge that emits the full SSE frame sequence to relay while
+// the HTTP request itself answers with a plain JSON body.
+//
+// It is deliberately NOT interactive: RequestPermission auto-rejects and RequestQuestion
+// errors, exactly as they do for the silent non-stream sender it replaces. A headless
+// caller - a script POSTing stream:false - can therefore never be left blocked waiting
+// for an answer from a browser that may not be open.
+func NewRelaySender(cfg *config.Config, relay io.Writer, model string) *Sender {
+	s := &Sender{
+		cfg:         cfg,
+		emit:        true,
+		interactive: false,
+		w:           relay,
+		chatID:      newChatID(),
+		created:     time.Now().Unix(),
+		model:       model,
+	}
+	if f, ok := relay.(http.Flusher); ok {
+		s.flusher = f
+	}
+	return s
+}
+
+// NewWakeRelaySender is the sender of a turn finished background tasks started
+// (Server.RunBackgroundWake). Every frame goes to the relay, as with
+// NewRelaySender, but a permission prompt is asked rather than refused: it is
+// emitted on the relay and persisted as the session's pending prompt, and the
+// web UI or a console following the turn answers it through the permission
+// endpoint. A question is still refused - nothing persists one for a client
+// that arrives after it was asked.
+func NewWakeRelaySender(cfg *config.Config, relay io.Writer, model string) *Sender {
+	s := NewRelaySender(cfg, relay, model)
+	s.asksPermission = true
+	return s
+}
+
+// SetSessionDir sets the persisted session directory for permission persistence across restarts.
+func (s *Sender) SetSessionDir(dir string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionDir = strings.TrimSpace(dir)
+}
+
+// SetQuestionPendingCallback installs an optional notification for the lifetime of
+// interactive question waits. The callback is called once after a wait is registered
+// and once after it is unregistered; it carries no question data.
+func (s *Sender) SetQuestionPendingCallback(callback func(sessionID string, pending bool)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.questionPending = callback
+}
+
+func (s *Sender) notifyQuestionPending(sessionID string, pending bool) {
+	s.mu.Lock()
+	callback := s.questionPending
+	s.mu.Unlock()
+	if callback != nil {
+		callback(sessionID, pending)
+	}
+}
+
+func wireBridgeSession(bridge *Sender, st *session.State) {
+	if bridge != nil && st != nil {
+		bridge.SetSessionDir(st.GetPersistedSessionDir())
+	}
+}
+
+func (s *Server) configureSender(bridge *Sender) *Sender {
+	if bridge != nil {
+		bridge.SetQuestionPendingCallback(s.publishQuestionPending)
+	}
+	return bridge
+}
+
+// SendSessionUpdate forwards agent chunks to SSE when streaming.
+func (s *Sender) SendSessionUpdate(sessionID string, update interface{}) error {
+	// A turn started here reads in the chats bound to its session too
+	// (chat_mirror.go): the browser is one surface of the conversation, not the
+	// only one. The mirror is a spectator, so its failure stays its own.
+	if s.extra != nil {
+		_ = s.extra.SendSessionUpdate(sessionID, update)
+	}
+	if u, ok := update.(acp.TokenUsageUpdate); ok {
+		s.mu.Lock()
+		s.usage.input += u.InputTokens
+		s.usage.output += u.OutputTokens
+		s.usage.cached += u.CachedInputTokens
+		s.mu.Unlock()
+	}
+	if !s.emit || s.w == nil {
+		return nil
+	}
+	switch u := update.(type) {
+	case acp.MessageChunkUpdate:
+		return s.forwardTextChunk(u)
+	case acp.ToolCallUpdate:
+		return s.writeNamedEventJSON("tool_call", u)
+	case acp.ToolCallStatusUpdate:
+		return s.writeNamedEventJSON("tool_call_update", u)
+	case acp.PlanUpdate:
+		return s.writeNamedEventJSON("plan", u)
+	case acp.TokenUsageUpdate:
+		return s.writeNamedEventJSON("token_usage", u)
+	case acp.UsageUpdate:
+		return s.writeNamedEventJSON("usage_update", u)
+	case acp.ProviderUsageUpdate:
+		return s.writeNamedEventJSON("provider_usage", u)
+	case acp.MemoryRunUpdate:
+		return s.writeNamedEventJSON("memory_run", u)
+	case acp.AvailableCommandsUpdate:
+		return s.writeNamedEventJSON("available_commands", u)
+	case acp.MessageQueueUpdate:
+		return s.writeNamedEventJSON("message_queue", u)
+	case acp.TurnProgressUpdate:
+		return s.writeNamedEventJSON("turn_progress", u)
+	case acp.SessionSettingsUpdate:
+		// The session's settings changed during this turn - a command, the
+		// permission dialog, the model's own switch: the client mirrors them.
+		return s.writeNamedEventJSON("session_settings", u)
+	case acp.BackgroundWakeUpdate:
+		// The first frame of a turn nobody typed: what woke the agent.
+		return s.writeNamedEventJSON("background_wake", u)
+	case acp.SessionGoalUpdate:
+		// The goal changed during this turn: set, checked, continued.
+		return s.writeNamedEventJSON("session_goal", u)
+	case acp.GoalTurnUpdate:
+		// The first frame of a turn the supervisor started: a row, not the
+		// instruction text the model reads.
+		return s.writeNamedEventJSON("goal_turn", u)
+	default:
+		return nil
+	}
+}
+
+// CompletionUsage is the OpenAI usage object of the JSON answer: the counters of
+// every token_usage update this sender received, summed, or nil when the
+// provider reported none.
+func (s *Sender) CompletionUsage() map[string]interface{} {
+	s.mu.Lock()
+	usage := s.usage
+	s.mu.Unlock()
+	return usage.openAI()
+}
+
+func (s *Sender) forwardTextChunk(u acp.MessageChunkUpdate) error {
+	// A user chunk mid-turn is a queued follow-up the agent has just read. It
+	// is not part of the assistant's answer, so it travels as its own named
+	// event rather than as a content delta: a client renders it as the user
+	// bubble it is, where it was read.
+	if u.SessionUpdate == acp.UpdateTypeUserMessageChunk {
+		if strings.TrimSpace(u.Content.Text) == "" {
+			return nil
+		}
+		return s.writeNamedEventJSON("user_message", u)
+	}
+	if u.SessionUpdate != acp.UpdateTypeAgentMessageChunk {
+		return nil
+	}
+	text := ""
+	if u.Content.Type == acp.ContentTypeText || u.Content.Type == acp.ContentTypeReasoning {
+		text = u.Content.Text
+	}
+	if text == "" {
+		return nil
+	}
+	choiceDelta := map[string]interface{}{}
+	if u.Content.Type == acp.ContentTypeReasoning {
+		choiceDelta["reasoning_content"] = text
+	} else {
+		choiceDelta["content"] = text
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delta := map[string]interface{}{
+		"id":      s.chatID,
+		"object":  "chat.completion.chunk",
+		"created": s.created,
+		"model":   s.model,
+		"choices": []map[string]interface{}{{
+			"index": 0,
+			"delta": choiceDelta,
+		}},
+	}
+	line, err := json.Marshal(delta)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "data: %s\n\n", line); err != nil {
+		return err
+	}
+	s.flushLocked()
+	return nil
+}
+
+// SendToolCall writes a tool call the model made as the OpenAI delta.tool_calls
+// chunk a client running its own tools expects: one chunk per call, arguments
+// complete, index counting the calls of this answer. No-op when not streaming.
+func (s *Sender) SendToolCall(index int, tc llm.ToolCall) error {
+	if !s.emit || s.w == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	line, err := json.Marshal(map[string]interface{}{
+		"id":      s.chatID,
+		"object":  "chat.completion.chunk",
+		"created": s.created,
+		"model":   s.model,
+		"choices": []map[string]interface{}{{
+			"index": 0,
+			"delta": map[string]interface{}{
+				"tool_calls": []map[string]interface{}{{
+					"index": index,
+					"id":    tc.ID,
+					"type":  "function",
+					"function": map[string]interface{}{
+						"name":      tc.Name,
+						"arguments": tc.InputJSON,
+					},
+				}},
+			},
+		}},
+	})
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "data: %s\n\n", line); err != nil {
+		return err
+	}
+	s.flushLocked()
+	return nil
+}
+
+func (s *Sender) writeNamedEventJSON(event string, payload interface{}) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	line, err := json.Marshal(payload)
+	if err != nil {
+		return err
+	}
+	if _, err := fmt.Fprintf(s.w, "event: %s\ndata: %s\n\n", event, line); err != nil {
+		return err
+	}
+	s.flushLocked()
+	return nil
+}
+
+// RequestPermission auto-approves when permission_mode is bypass; otherwise emits SSE and waits for POST /coddy/sessions/{id}/permission.
+func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionRequestParams) (*acp.PermissionResult, error) {
+	// A subagent's request carries the child's own effective mode, which
+	// decides the bypass short-circuit instead of the global setting: a child
+	// narrowed to ask is prompted, or denied when nobody can answer.
+	// The session's gate stamps the mode it decided under, so a session
+	// switched to ask on a server configured for bypass is asked here too;
+	// the configuration only decides for a request that carries no stamp.
+	cfgMode := ""
+	if s.cfg != nil {
+		cfgMode = s.cfg.Tools.ResolvedPermMode()
+	}
+	if permission.AutoApproves(params, cfgMode) {
+		return &acp.PermissionResult{Outcome: "allow", OptionID: "allow"}, nil
+	}
+	if (!s.interactive && !s.asksPermission) || s.w == nil {
+		return &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}, nil
+	}
+	sid := strings.TrimSpace(params.SessionID)
+	tcid := strings.TrimSpace(params.ToolCall.ToolCallID)
+	if sid == "" || tcid == "" {
+		return nil, fmt.Errorf("sessionId and toolCall.toolCallId are required")
+	}
+	s.mu.Lock()
+	sd := s.sessionDir
+	s.mu.Unlock()
+	toolName := ""
+	argsJSON := ""
+	if len(params.ToolCall.Content) > 0 {
+		argsJSON = strings.TrimSpace(params.ToolCall.Content[0].Content.Text)
+	}
+	if t := strings.TrimSpace(params.ToolCall.Title); t != "" {
+		if after, ok := strings.CutPrefix(t, "Run:"); ok {
+			toolName = strings.TrimSpace(after)
+		} else if after, ok := strings.CutPrefix(t, "run:"); ok {
+			toolName = strings.TrimSpace(after)
+		}
+	}
+	// A stamped request is a subagent's prompt relayed under the parent's
+	// session: it cannot be resumed later (the child's tool call is not in
+	// the parent transcript, and the child is retired with its turn), so it
+	// is answered live or not at all and never becomes the parent's pending
+	// record, which stays reserved for the parent's own gate.
+	relayed := strings.TrimSpace(params.EffectivePermissionMode) != ""
+	if sd != "" && !relayed {
+		_ = session.WritePendingPermission(sd, params, toolName, argsJSON)
+	}
+	ch := registerPermissionWait(sid, tcid, sd)
+	defer unregisterPermissionWait(sid, tcid, sd)
+	if err := s.writeNamedEventJSON("permission", params); err != nil {
+		if _, merr := json.Marshal(params); merr != nil {
+			// A marshal failure means the prompt never left the process;
+			// waiting for an answer nobody saw would only hang the turn.
+			return nil, err
+		}
+		// A dead client socket is not fatal: the frame still reached the
+		// composer relay through the tee, the answer arrives through POST
+		// /coddy/sessions/{id}/permission on a connection of its own, and a
+		// watcher can pick the prompt up there.
+	}
+	// A wait that ends without an answer still ends the prompt: the turn
+	// records the call as refused (a Stop, a cancelled turn), so a record left
+	// behind would only keep the session "permission pending" in History.
+	// Only this call's record goes; a crash, which runs none of this, keeps it.
+	clearOwnRecord := func() {
+		if sd == "" || relayed {
+			return
+		}
+		if rec, err := session.ReadPendingPermission(sd); err == nil && strings.TrimSpace(rec.ToolCall.ToolCallID) == tcid {
+			_ = session.ClearPendingPermission(sd)
+		}
+	}
+	// The chats this turn is mirrored into are asked as well: a tool call that
+	// stops the whole turn has to be answerable wherever the person is reading.
+	// The first press wins and the other prompt is withdrawn.
+	refuse := &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}
+	askCtx, stopAsking := context.WithCancelCause(ctx)
+	defer stopAsking(nil)
+	fromChat := s.askChatsPermission(askCtx, params)
+	for {
+		select {
+		case res := <-ch:
+			stopAsking(session.ErrAnsweredElsewhere)
+			if res == nil {
+				clearOwnRecord()
+				return refuse, nil
+			}
+			if sd != "" && !relayed {
+				_ = session.ClearPendingPermission(sd)
+			}
+			return res, nil
+		case res := <-fromChat:
+			fromChat = nil
+			if session.PressedPermission(res) {
+				clearOwnRecord()
+				return res, nil
+			}
+		case <-ctx.Done():
+			clearOwnRecord()
+			return refuse, nil
+		}
+	}
+}
+
+// askChatsPermission asks the chats this turn is mirrored into the same prompt.
+// It yields once: the chat's answer, or nothing when no chat follows the turn or
+// the prompt was withdrawn because the page answered first.
+func (s *Sender) askChatsPermission(ctx context.Context, params acp.PermissionRequestParams) <-chan *acp.PermissionResult {
+	if s.extra == nil {
+		return nil
+	}
+	answers := make(chan *acp.PermissionResult, 1)
+	go func() {
+		res, err := s.extra.RequestPermission(ctx, params)
+		if err != nil {
+			res = nil
+		}
+		answers <- res
+	}()
+
+	return answers
+}
+
+// RequestQuestion emits a composer SSE question event and waits for POST /coddy/sessions/{id}/question.
+func (s *Sender) RequestQuestion(ctx context.Context, params acp.QuestionRequestParams) (*acp.QuestionResult, error) {
+	if !s.interactive || s.w == nil {
+		return nil, fmt.Errorf("question tool requires streaming responses")
+	}
+	sid := strings.TrimSpace(params.SessionID)
+	rid := strings.TrimSpace(params.RequestID)
+	if sid == "" || rid == "" {
+		return nil, fmt.Errorf("sessionId and requestId are required")
+	}
+	ch := registerQuestionWait(sid, rid)
+	s.notifyQuestionPending(sid, true)
+	defer func() {
+		unregisterQuestionWait(sid, rid)
+		s.notifyQuestionPending(sid, false)
+	}()
+	if err := s.writeNamedEventJSON("question", params); err != nil {
+		if _, merr := json.Marshal(params); merr != nil {
+			// Same rule as in RequestPermission: only a payload that never
+			// existed as an event aborts the wait.
+			return nil, err
+		}
+		// A dead client socket must not fail the question: the frame still
+		// reached the composer relay through the tee, and the answer arrives
+		// through POST /coddy/sessions/{id}/question, not through this stream.
+	}
+	// The chats this turn is mirrored into are asked as well: the person may be
+	// reading there, and a question a chat never showed is a turn that stalls
+	// where it stands. Whoever answers first ends it; the other prompt is
+	// withdrawn with the note that says somebody answered elsewhere.
+	askCtx, stopAsking := context.WithCancelCause(ctx)
+	defer stopAsking(nil)
+	fromChat := s.askChatsQuestion(askCtx, params)
+	for {
+		select {
+		case res := <-ch:
+			stopAsking(session.ErrAnsweredElsewhere)
+			if res == nil {
+				return &acp.QuestionResult{}, nil
+			}
+			return res, nil
+		case res := <-fromChat:
+			fromChat = nil
+			if session.AnsweredQuestion(res) {
+				return res, nil
+			}
+		case <-ctx.Done():
+			return &acp.QuestionResult{}, ctx.Err()
+		}
+	}
+}
+
+// askChatsQuestion asks the chats this turn is mirrored into the same question.
+// It yields once: the chat's answer, or nothing when no chat follows the turn or
+// the prompt was withdrawn because the page answered first.
+func (s *Sender) askChatsQuestion(ctx context.Context, params acp.QuestionRequestParams) <-chan *acp.QuestionResult {
+	if s.extra == nil {
+		return nil
+	}
+	answers := make(chan *acp.QuestionResult, 1)
+	go func() {
+		res, err := s.extra.RequestQuestion(ctx, params)
+		if err != nil {
+			res = nil
+		}
+		answers <- res
+	}()
+
+	return answers
+}
+
+// WriteCoddyMetaSSE emits a named event with Coddy response metadata (effective model). No-op when not streaming.
+func (s *Sender) WriteCoddyMetaSSE(metadata map[string]string) error {
+	if !s.emit || s.w == nil || len(metadata) == 0 {
+		return nil
+	}
+	payload := map[string]interface{}{"metadata": metadata}
+	return s.writeNamedEventJSON("coddy_meta", payload)
+}
+
+// FinishStream writes coddy_meta (when metadata non-nil), then [DONE] for SSE.
+func (s *Sender) FinishStreamWithMetadata(meta map[string]string) error {
+	if s.emit && s.w != nil && len(meta) > 0 {
+		_ = s.WriteCoddyMetaSSE(meta)
+	}
+	return s.FinishStream()
+}
+
+// FinishStream writes [DONE] for SSE.
+func (s *Sender) FinishStream() error {
+	if !s.emit || s.w == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := io.WriteString(s.w, "data: [DONE]\n\n")
+	s.flushLocked()
+	return err
+}
+
+// SendError writes an OpenAI-shaped error frame through the same writer as every other
+// frame, so a teed relay sees the failure instead of just watching the stream close.
+func (s *Sender) SendError(msg string) error {
+	if !s.emit || s.w == nil {
+		return nil
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, err := io.WriteString(s.w, "data: "+errorJSON(msg)+"\n\n")
+	s.flushLocked()
+	return err
+}
+
+// SendErrorFor writes the error frame of a failed turn or completion: the
+// same error object a blocking request is answered with (replyForError), so
+// a provider's status reaches a streaming client as upstream_status too.
+func (s *Sender) SendErrorFor(err error) error {
+	if !s.emit || s.w == nil {
+		return nil
+	}
+	raw, _ := json.Marshal(replyForError(err).body)
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	_, werr := fmt.Fprintf(s.w, "data: %s\n\n", raw)
+	s.flushLocked()
+	return werr
+}
+
+// ChatID returns the OpenAI-style completion id for this request.
+func (s *Sender) ChatID() string { return s.chatID }
+
+// SetModel updates the model name in subsequent chunks.
+func (s *Sender) SetModel(m string) { s.model = m }
+
+func newChatID() string {
+	return fmt.Sprintf("chatcmpl-%d", time.Now().UnixNano())
+}

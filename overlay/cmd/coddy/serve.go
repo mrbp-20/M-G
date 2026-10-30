@@ -1,0 +1,834 @@
+package main
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"flag"
+	"fmt"
+	"io"
+	"net"
+	"os"
+	"os/signal"
+	"path/filepath"
+	"strconv"
+	"strings"
+	"syscall"
+
+	"github.com/EvilFreelancer/coddy-agent/external/browser"
+	"github.com/EvilFreelancer/coddy-agent/external/gateway"
+	"github.com/EvilFreelancer/coddy-agent/external/httpserver"
+	"github.com/EvilFreelancer/coddy-agent/external/scheduler"
+	"github.com/EvilFreelancer/coddy-agent/external/swarm"
+	"github.com/EvilFreelancer/coddy-agent/internal/bgtask"
+	"github.com/EvilFreelancer/coddy-agent/internal/config"
+	"github.com/EvilFreelancer/coddy-agent/internal/dryrun"
+	"github.com/EvilFreelancer/coddy-agent/internal/llm"
+	"github.com/EvilFreelancer/coddy-agent/internal/logger"
+	"github.com/EvilFreelancer/coddy-agent/internal/serve"
+	"github.com/EvilFreelancer/coddy-agent/internal/version"
+)
+
+// runServe implements `coddy serve`: one process running every subsystem the
+// configuration enables.
+//
+// The surfaces used to be subcommands, which made each of them a process of its
+// own. That is why running a Telegram bot next to the web UI meant two managers
+// over one sessions directory and no way to watch a chat conversation from a
+// browser. Here they are goroutines sharing one manager, and turning one on is
+// a line of YAML.
+// serveVerbList names the verbs runServe dispatches on, for the error that
+// refuses a word it does not know.
+const serveVerbList = "install, uninstall, status, stop, restart, set-password"
+
+func runServe(args []string) error {
+	// The control verbs come before the flag set, because they are about a
+	// daemon that is already running and share none of its options.
+	if len(args) > 0 {
+		switch args[0] {
+		case "install":
+			return runServeInstall(args[1:])
+		case "uninstall":
+			return runServeUninstall(args[1:])
+		case "status":
+			return runServeStatus(args[1:])
+		case "stop":
+			return runServeStop(args[1:])
+		case "restart":
+			return runServeRestart(args[1:])
+		case "set-password":
+			return runServeSetPassword(args[1:])
+		}
+	}
+
+	fs := flag.NewFlagSet("serve", flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	cfgPath := fs.String("config", "", "path to config.yaml (CODDY_CONFIG, else <home>/config.yaml or legacy search paths)")
+	logLevel := fs.String("log-level", "", "log level: a bare level (debug|info|warn|error), or a comma-separated spec with per-component overrides such as info,gateway.telegram=debug (default from config)")
+	logOutput := fs.String("log-output", "", "stdout|stderr|file|both (default from config)")
+	logFile := fs.String("log-file", "", "log file path when output includes file (default from config)")
+	logFormat := fs.String("log-format", "", "text|json (default from config)")
+	homeDir := fs.String("home", "", "agent state directory (CODDY_HOME, default ~/.coddy)")
+	serveCWD := fs.String("cwd", "", "default session cwd when a client omits it (CODDY_CWD, default process cwd)")
+	sessionsRoot := fs.String("sessions-dir", "", "sessions root (empty uses config sessions.dir or ~/.coddy/sessions)")
+	persistedSession := fs.String("session-id", "", "optional session id for new sessions (folder name)")
+
+	host := fs.String("H", "", "bind address for the HTTP API (default httpserver.host, else 127.0.0.1)")
+	port := fs.String("P", "", "listen port for the HTTP API (default httpserver.port, else 12345)")
+	fs.StringVar(host, "host", "", "alias of -H")
+	fs.StringVar(port, "port", "", "alias of -P")
+	authToken := fs.String("auth-token", "", "bearer token required on /v1/* and /coddy/* (else "+httpserver.TokenEnvVar+", else httpserver.auth_token). Empty = no auth")
+
+	swarmHost := fs.String("swarm-host", "", "bind address for the swarm relay (default swarm.host, else 0.0.0.0)")
+	swarmPort := fs.String("swarm-port", "", "listen port for the swarm relay (default swarm.port, else 12346)")
+	swarmAuthToken := fs.String("swarm-auth-token", "", "bearer token clients must present to the relay (else "+swarm.TokenEnvVar+", else swarm.auth_token)")
+	swarmPairing := fs.String("swarm-pairing-token", "", "credential nodes must present to register (else "+swarm.PairingEnvVar+", else swarm.pairing_tokens)")
+	swarmInsecure := fs.Bool("swarm-allow-insecure", false, "permit binding the relay off loopback without a client token")
+
+	httpOn := fs.Bool("http", true, "run the HTTP API in this process; overrides httpserver.enable")
+	gatewayOn := fs.Bool("gateway", false, "run the Telegram bot; overrides gateways.telegram.enable (the Pachca bot follows gateways.pachca.enable)")
+	swarmOn := fs.Bool("swarm", false, "run the swarm relay; overrides swarm.enable")
+	schedulerOn := fs.Bool("scheduler", false, "run the cron scheduler; overrides scheduler.enable")
+
+	daemon := fs.Bool("daemon", false, "run in the background under a dispatcher that restarts the process if it dies (see `coddy serve status|stop|restart`)")
+	fs.BoolVar(daemon, "d", false, "alias of --daemon")
+
+	skillsAutoDiscovery := fs.Bool(config.SkillsAutoDiscoveryFlagName, true, "model-driven skill auto-discovery (load_skill tool); pass =false to disable and override config")
+	projectTrust := fs.String(config.ProjectTrustFlagName, config.ProjectTrustAsk, config.ProjectTrustFlagUsage)
+	testConfig := config.AddCheckFlag(fs)
+	dryRun := dryrun.AddFlag(fs)
+
+	fs.Usage = func() {
+		_, _ = fmt.Fprintf(fs.Output(), "Usage of serve (runs every subsystem enabled in config.yaml):\n")
+		fs.PrintDefaults()
+	}
+	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return nil
+		}
+		return err
+	}
+	// serve takes no positional arguments, so a word here is a verb that does
+	// not exist - a typo, or one a release renamed. Starting a server in the
+	// foreground over it would be the worst possible reading.
+	if fs.NArg() > 0 {
+		return fmt.Errorf("coddy serve: unknown verb %q (the verbs are %s; serve itself takes flags only)", fs.Arg(0), serveVerbList)
+	}
+
+	cli := config.CLIPaths{
+		Home:   strings.TrimSpace(*homeDir),
+		CWD:    strings.TrimSpace(*serveCWD),
+		Config: strings.TrimSpace(*cfgPath),
+	}
+	// A config check reports on the file and leaves: nothing is created under
+	// the home and no subsystem starts. Next to --dry-run it asks for the full
+	// report instead of the problems-only one.
+	if *testConfig && !*dryRun {
+		return runConfigTest(cli)
+	}
+
+	// applyProcessOverrides re-applies everything the operator decided outside
+	// config.yaml: the flags they typed and the credentials they kept in the
+	// environment. It runs on the document this process loaded and again on
+	// every document the watcher picks up off the disk, because a reload that
+	// dropped `--gateway` or `-H 0.0.0.0` would take away, on somebody else's
+	// unrelated save, a decision only the command line carries.
+	//
+	// Flags override the file only where the operator actually typed one, so a
+	// default in the flag set never silently outvotes a decision in config.yaml.
+	applyProcessOverrides := func(c *config.Config) error {
+		applySubsystemFlags(fs, c, subsystemFlags{
+			http: httpOn, gateway: gatewayOn, swarm: swarmOn, scheduler: schedulerOn,
+		})
+		if *swarmInsecure {
+			c.Swarm.AllowInsecure = true
+		}
+		if t := firstNonEmpty(strings.TrimSpace(*swarmPairing), os.Getenv(swarm.PairingEnvVar)); t != "" {
+			c.Swarm.PairingTokens = append(c.Swarm.PairingTokens, t)
+		}
+		config.ApplySkillsAutoDiscoveryFlag(fs, c, skillsAutoDiscovery)
+		if err := config.ApplyProjectTrustFlag(fs, c, projectTrust); err != nil {
+			return err
+		}
+		c.Swarm.Normalize()
+		if err := c.Swarm.Validate(); err != nil {
+			return err
+		}
+		if err := c.Scheduler.Validate(c); err != nil {
+			return fmt.Errorf("scheduler: %w", err)
+		}
+		c.Logger.ApplyOverrides(config.LoggerCLIOverrides{
+			Level:  strings.TrimSpace(*logLevel),
+			Output: strings.TrimSpace(*logOutput),
+			File:   strings.TrimSpace(*logFile),
+			Format: strings.TrimSpace(*logFormat),
+		})
+		// Where the relay actually listens decides what it is willing to dial,
+		// and the flag is part of that answer: a relay told to bind loopback on
+		// the command line is a development relay whatever the file says.
+		c.Swarm.Host = firstNonEmpty(strings.TrimSpace(*swarmHost), c.Swarm.EffectiveHost())
+		return nil
+	}
+	// The listen addresses are read from a configuration rather than captured,
+	// because the supervisor asks the same questions of a reloaded one: an
+	// address that moved is the one change a running process cannot adopt, and
+	// answering it needs the flags weighed against the new file exactly as they
+	// were against the old.
+	httpListenAddr := func(c *config.Config) string {
+		return net.JoinHostPort(
+			firstNonEmpty(strings.TrimSpace(*host), c.HTTPServer.DefaultListenHost()),
+			firstNonEmpty(strings.TrimSpace(*port), c.HTTPServer.DefaultListenPortString()),
+		)
+	}
+	swarmListenAddr := func(c *config.Config) string {
+		return net.JoinHostPort(c.Swarm.Host, firstNonEmpty(strings.TrimSpace(*swarmPort), strconv.Itoa(c.Swarm.EffectivePort())))
+	}
+	// A dry run resolves the subsystems and their addresses as a start would,
+	// probes them together with everything the file names, and leaves.
+	if *dryRun {
+		return runServeDryRun(cli, *testConfig, applyProcessOverrides, httpListenAddr, swarmListenAddr,
+			len(outOfBandTokens(*authToken, httpserver.TokenEnvVar)) > 0)
+	}
+	paths, err := config.Resolve(cli)
+	if err != nil {
+		return err
+	}
+	if err := serve.EnsureHomeLayout(paths.Home); err != nil {
+		return err
+	}
+	cfg, err := loadRunConfig(cli)
+	if err != nil {
+		return fmt.Errorf("load config: %w", err)
+	}
+
+	if err := applyProcessOverrides(cfg); err != nil {
+		return err
+	}
+
+	log, logCloser, err := logger.New(cfg.Logger)
+	if err != nil {
+		return fmt.Errorf("log: %w", err)
+	}
+	defer func() { _ = logCloser.Close() }()
+
+	httpAddr := httpListenAddr(cfg)
+	swarmAddr := swarmListenAddr(cfg)
+
+	httpTokens := outOfBandTokens(*authToken, httpserver.TokenEnvVar)
+
+	rt := &serve.Runtime{}
+	wiring := newMetricsWiring(rt)
+	all := subsystems(rt, subsystemDeps{
+		httpListenAddr:  httpListenAddr,
+		swarmListenAddr: swarmListenAddr,
+		home:            paths.Home,
+		httpAuthTokens:  httpTokens,
+		httpLogin:       outOfBandLogin(),
+		swarmAuthTokens: outOfBandTokens(*swarmAuthToken, swarm.TokenEnvVar),
+		adjust:          applyProcessOverrides,
+		metrics:         wiring,
+	})
+	// Resolve is the pre-flight: it refuses a configuration this binary cannot
+	// honour before a single listener is opened, and reports what will run.
+	enabled, err := serve.Resolve(cfg, all)
+	if err != nil {
+		return err
+	}
+
+	// Resolve doubles as the pre-flight for the background forms below: a
+	// configuration this binary cannot honour is refused in the terminal that
+	// typed the command, not in a log file nobody is tailing yet.
+	daemonOpts := serve.DaemonOptions{
+		Home:   paths.Home,
+		Config: paths.ConfigPath,
+		Args:   typedServeFlags(fs),
+		Log:    log,
+	}
+	switch {
+	case serve.Role() == serve.RoleDispatcher:
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return serve.RunDispatcher(ctx, daemonOpts)
+	case *daemon:
+		if hint, active := serviceHint(); hint != "" {
+			// Over the same agent home both would bind the same listeners,
+			// and the worker that loses would be restarted forever. Another
+			// home may well listen elsewhere, so that one is only warned.
+			if active && filepath.Clean(paths.Home) == serve.ServiceAgentHome() {
+				return fmt.Errorf("%s; it serves %s already, so a daemon there would only fight it for the port", hint, paths.Home)
+			}
+			fmt.Fprintf(os.Stderr, "warning: %s\n", hint)
+		}
+		rec, err := serve.StartDetached(daemonOpts)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "coddy serve %s is running in the background\n  pid     %d\n  config  %s\n  log     %s\n",
+			rec.Version, rec.PID, rec.Config, rec.Log)
+		if !rec.Serving() {
+			// The dispatcher is up and will keep trying, which is the whole
+			// point of it - but nothing is being served yet, and saying only
+			// "running" would send the operator looking in the wrong place.
+			fmt.Fprintf(os.Stderr, "warning: no surface is up yet: %s\n  the dispatcher keeps retrying; `coddy serve status` reports when one comes up\n", rec.LastError)
+		}
+		return nil
+	}
+
+	if err := rt.Init(serve.Options{
+		CLI:                cli,
+		AdjustConfig:       applyProcessOverrides,
+		SessionsRoot:       strings.TrimSpace(*sessionsRoot),
+		PreferredSessionID: strings.TrimSpace(*persistedSession),
+		NeedsSessions:      needsSessions(enabled),
+		Log:                log,
+		Cfg:                cfg,
+	}); err != nil {
+		return err
+	}
+	// The registry counts for the whole process, whether or not the listener
+	// is enabled: enabling it later shows what happened before.
+	defer wiring.Start()()
+
+	log.Info("starting coddy serve", "version", version.Get(), "config", paths.ConfigPath, "workspace", paths.CWD)
+	// The agents acp providers started stop with the process; in their own
+	// process groups they would outlive it.
+	llm.SetACPLogger(log)
+	defer llm.StopACPAgents()
+	printServeBanner(os.Stderr, cfg, enabled, httpAddr, swarmAddr, len(httpTokens) > 0, outOfBandLogin().IsSet())
+
+	if rt.Mgr != nil {
+		// The servers of the global configuration start with the process and
+		// stay up for every session of every surface; a project server runs
+		// once per workspace while a session there holds it. All of them stop
+		// with the process.
+		rt.Mgr.StartGlobalMCPServers()
+		defer rt.Mgr.CloseMCP()
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+
+	reloads := make(chan *config.Config, 1)
+	// Every reload path - the settings screen, the agent's config_commit tool,
+	// the console, a relay's own settings page - lands in the runtime (the
+	// session manager when the process has one), so watching it is how a remote
+	// edit reaches a subsystem that has to be rebuilt to honour it. A relay
+	// alone has no manager and used to have no reloads at all.
+	//
+	// Only the newest configuration is worth keeping: an observer must not
+	// block the goroutine that replaced it, and a queued older document is
+	// already wrong by the time the supervisor would read it.
+	removeObserver := rt.AddConfigObserver(func(next *config.Config) { offerNewest(reloads, next) })
+	defer removeObserver()
+
+	// Not every writer of config.yaml is this process. `coddy providers
+	// login` adds a provider and its models from another terminal, an
+	// operator edits the file by hand, a deployment drops a new one in.
+	// Watching the file turns all of those into the same swap the settings
+	// screen makes, so an open model picker, a chat surface and the
+	// supervisor see them together.
+	watcher := &config.FileWatcher{
+		Paths:   paths,
+		Live:    rt.Cfg,
+		Install: rt.ReplaceConfig,
+		Adjust:  applyProcessOverrides,
+		Log:     log,
+	}
+	go func() { _ = watcher.Run(ctx) }()
+
+	// The supervisor is handed every descriptor, not just the enabled ones, so
+	// a later configuration change can turn a surface on as well as off.
+	sup := serve.NewSupervisor(log, all)
+	rt.SetSupervisor(sup)
+	// Only a process with something waiting to start it again may end itself
+	// over a configuration change. In the foreground the operator is the only
+	// one who would bring it back, so they are told instead.
+	sup.Restartable = serve.Supervised()
+	// A bare relay opened no session store; a reload that turns on a surface
+	// running agent turns needs a fresh process (Supervisor.Sessionless).
+	sup.Sessionless = rt.Mgr == nil
+	// The role is this process's, not its children's: a `coddy serve` the
+	// agent starts from a tool call must not believe a dispatcher or systemd
+	// will bring it back.
+	_ = os.Unsetenv(serve.EnvRole)
+	err = sup.Run(ctx, cfg, reloads)
+	if errors.Is(err, serve.ErrRestartRequested) {
+		log.Info("exiting so the dispatcher or the service manager can start a process with the new listen settings")
+		return serve.ExitCodeError{Code: serve.ExitRestart, Err: err}
+	}
+	return err
+}
+
+// offerNewest hands next to the supervisor through reloads, a channel with one
+// slot, replacing a configuration still waiting there. It never blocks - it
+// runs on the goroutine that replaced the configuration - and never drops next:
+// with one slot and one reader, the slot is either free to send into or holds
+// an older value to take out, and one select decides which. Checking the two in
+// turn let the supervisor empty the slot in between, and next was dropped.
+func offerNewest(reloads chan *config.Config, next *config.Config) {
+	for {
+		select {
+		case reloads <- next:
+			return
+		case <-reloads:
+		}
+	}
+}
+
+// typedServeFlags rebuilds the command line for the processes this one starts:
+// every flag the operator actually typed, minus the switch that asked for the
+// background, which only makes sense once.
+//
+// It is rebuilt from the parsed flag set rather than filtered out of the raw
+// arguments, because the raw form is ambiguous - `-home -d` puts "-d" in the
+// value position - and because a canonical `-name=value` is what a record has to
+// keep for `coddy serve restart` to bring back the same daemon a week later.
+func typedServeFlags(fs *flag.FlagSet) []string {
+	var out []string
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "d" || f.Name == "daemon" {
+			return
+		}
+		out = append(out, "-"+f.Name+"="+f.Value.String())
+	})
+	return out
+}
+
+// subsystemFlags collects the explicit on/off switches.
+type subsystemFlags struct {
+	http, gateway, swarm, scheduler *bool
+}
+
+// applySubsystemFlags copies only the switches the operator actually typed.
+func applySubsystemFlags(fs *flag.FlagSet, cfg *config.Config, f subsystemFlags) {
+	fs.Visit(func(fl *flag.Flag) {
+		switch fl.Name {
+		case "http":
+			v := *f.http
+			cfg.HTTPServer.Enabled = &v
+		case "gateway":
+			cfg.Gateways.Telegram.Enabled = *f.gateway
+		case "swarm":
+			cfg.Swarm.Enabled = *f.swarm
+		case "scheduler":
+			cfg.Scheduler.Enabled = *f.scheduler
+		}
+	})
+}
+
+// httpAuth says which credentials the API will accept: a bearer token (from
+// the file, --auth-token or the environment) and the web sign-in (an account
+// in the file or the environment, unless the file turns it off).
+func httpAuth(cfg *config.Config, extraAuth, extraLogin bool) (token, login bool) {
+	token = extraAuth || len(cfg.HTTPServer.EffectiveAuthTokens()) > 0
+	// An `enable: true` with no account behind it is not a sign-in: the server
+	// refuses to start on it, and announcing one here would be the last thing
+	// the operator read before that error.
+	login = !cfg.HTTPServer.Login.IsExplicitlyDisabled() &&
+		(extraLogin || cfg.HTTPServer.Login.HasAccount())
+	return token, login
+}
+
+// webUIAccess is what the web UI of this process asks of a visitor, the
+// question the Telegram bot asks before it hands out the address of the web
+// UI (gateways.telegram.mini_app): its menu button is shown to everybody who
+// opens the bot.
+func webUIAccess(cfg *config.Config, extraAuth, extraLogin bool) gateway.WebUIAccess {
+	if !httpserver.Available || !cfg.HTTPServer.IsEnabled() {
+		return gateway.WebUIElsewhere
+	}
+	if token, login := httpAuth(cfg, extraAuth, extraLogin); token || login {
+		return gateway.WebUIGated
+	}
+	if cfg.HTTPServer.AllowInsecure {
+		return gateway.WebUIOpenByChoice
+	}
+	return gateway.WebUIOpen
+}
+
+// httpAuthSummary names the credentials the API will accept, because "no auth"
+// next to an address on a network is the line an operator needs to read, and a
+// server closed with only one of the two is a thing worth being able to see.
+func httpAuthSummary(cfg *config.Config, extraAuth, extraLogin bool) string {
+	token, login := httpAuth(cfg, extraAuth, extraLogin)
+	switch {
+	case token && login:
+		return "bearer auth, web sign-in"
+	case token:
+		return "bearer auth"
+	case login:
+		return "web sign-in, no token for API clients"
+	default:
+		return "no auth"
+	}
+}
+
+// subsystemDeps are the already-resolved values the descriptors close over.
+type subsystemDeps struct {
+	// httpListenAddr and swarmListenAddr answer where a surface binds under a
+	// configuration: the one it is started from, and the one a reload brings,
+	// which is what tells a reload that moved an address from one that left it
+	// alone. No address is captured at startup - a surface a reload turns on
+	// listens where that reload says.
+	httpListenAddr  func(*config.Config) string
+	swarmListenAddr func(*config.Config) string
+	home            string
+	httpAuthTokens  []string
+	httpLogin       httpserver.LoginCredentials
+	swarmAuthTokens []string
+	// adjust re-applies the command-line overrides to a configuration loaded
+	// from the file, the way the file watcher does, before it is installed.
+	adjust func(*config.Config) error
+	// metrics is the exporter of this build; its descriptor ends the list.
+	metrics metricsWiring
+}
+
+// metricsWiring is what coddy serve needs of the Prometheus exporter, so this
+// file imports nothing of it: metrics.go carries the exporter in a build with
+// the metrics tag, metrics_stub.go the refusal in one without.
+type metricsWiring interface {
+	// Subsystem describes the exporter; Available says whether this build
+	// carries it, which is also what the settings form of the Metrics section
+	// depends on.
+	Subsystem() serve.Subsystem
+	// Start begins counting, once the runtime is initialised, and returns what
+	// ends it.
+	Start() (stop func())
+}
+
+// metricsDescriptor is the exporter's descriptor in every build. A build with
+// the tag completes it with what runs it. The exporter is auxiliary: it serves
+// alongside the surfaces and keeps no process up on its own.
+func metricsDescriptor() serve.Subsystem {
+	return serve.Subsystem{
+		Kind:      serve.KindMetrics,
+		ConfigKey: "metrics.enable",
+		BuildTag:  "metrics",
+		Auxiliary: true,
+		Enabled:   func(c *config.Config) bool { return c.Metrics.Enable },
+	}
+}
+
+// subsystems describes every surface this binary knows about, available or not.
+//
+// A descriptor exists even when its build tag is missing, so a configuration
+// that asks for a surface this binary cannot run is refused by name instead of
+// starting a daemon that quietly does less than it was told to.
+func subsystems(rt *serve.Runtime, deps subsystemDeps) []serve.Subsystem {
+	metrics := deps.metrics.Subsystem()
+	var unbuilt []string
+	if !metrics.Available {
+		unbuilt = append(unbuilt, "metrics")
+	}
+	if !browser.Available {
+		unbuilt = append(unbuilt, "browser")
+	}
+	return []serve.Subsystem{
+		{
+			Kind:          serve.KindHTTP,
+			ConfigKey:     "httpserver.enable",
+			BuildTag:      "http",
+			Available:     httpserver.Available,
+			NeedsSessions: true,
+			Enabled:       func(c *config.Config) bool { return c.HTTPServer.IsEnabled() },
+			// No Fingerprint: the listener is what the caller is talking
+			// through, so it is not rebuilt underneath them. Moving it takes a
+			// fresh process, which under a dispatcher is exactly what happens -
+			// that is how an operator changes the port of the very server whose
+			// settings screen they are typing into.
+			RestartKey: deps.httpListenAddr,
+			Run: func(ctx context.Context, cfg *config.Config) error {
+				// OnServer is called with the live server and then with nil,
+				// both from this instance's goroutine.
+				withdrawPrompts := func() {}
+				return httpserver.Serve(ctx, httpserver.Options{
+					Cfg: cfg, Mgr: rt.Mgr, Log: rt.Log,
+					DefaultCWD: rt.Paths.CWD, Home: deps.home,
+					ListenAddr: deps.httpListenAddr(cfg), ExtraAuthTokens: deps.httpAuthTokens,
+					ExtraLogin: deps.httpLogin, DetachedPrompts: rt, Wakes: rt,
+					// The way back: a turn this server starts reads in the chats
+					// its session is bound to (httpserver.ChatMirrors).
+					ChatMirrors:     rt,
+					UnbuiltSections: unbuilt,
+					Status:          rt.StatusDocument,
+					OnServer: func(s *httpserver.Server) {
+						if s == nil {
+							rt.SetTurnMirror(nil)
+							withdrawPrompts()
+							return
+						}
+						rt.SetTurnMirror(s)
+						// A detached subagent's prompt is shown in the chat of
+						// its parent session, in the browser and in a console
+						// attached over --remote alike.
+						withdrawPrompts = rt.AddDetachedPermissionApprover(s)
+					},
+				})
+			},
+		},
+		{
+			Kind:          serve.KindGateway,
+			ConfigKey:     "gateways.telegram.enable",
+			BuildTag:      "gateway",
+			Available:     gateway.TelegramAvailable,
+			NeedsSessions: true,
+			Enabled:       func(c *config.Config) bool { return c.Gateways.Telegram.Enabled },
+			// A bot is a client of somebody else's server, so it can be rebuilt
+			// in place: that is how a token rotated from the settings screen
+			// takes effect without anyone reaching the machine.
+			Fingerprint: gateway.Fingerprint,
+			Run: func(ctx context.Context, cfg *config.Config) error {
+				return gateway.ServeTelegram(ctx, gateway.Options{
+					Cfg: cfg, Mgr: rt.Mgr, Log: rt.Log,
+					DefaultCWD: rt.Paths.CWD, Mirror: rt, Prompts: rt, Wakes: rt,
+					WebUI: func(c *config.Config) gateway.WebUIAccess {
+						return webUIAccess(c, len(deps.httpAuthTokens) > 0, deps.httpLogin.IsSet())
+					},
+				})
+			},
+		},
+		{
+			// The Pachca bot is a surface of its own, so a token rotated for
+			// it rebuilds this bot alone and the Telegram one keeps running.
+			Kind:          serve.KindGatewayPachca,
+			ConfigKey:     "gateways.pachca.enable",
+			BuildTag:      "gateway",
+			Available:     gateway.PachcaAvailable,
+			NeedsSessions: true,
+			Enabled:       func(c *config.Config) bool { return c.Gateways.Pachca.Enabled },
+			Fingerprint:   gateway.PachcaFingerprint,
+			Run: func(ctx context.Context, cfg *config.Config) error {
+				return gateway.ServePachca(ctx, gateway.Options{
+					Cfg: cfg, Mgr: rt.Mgr, Log: rt.Log,
+					DefaultCWD: rt.Paths.CWD, Mirror: rt, Prompts: rt, Wakes: rt,
+				})
+			},
+		},
+		{
+			// The MAX bot is a surface of its own too: a token rotated for it
+			// rebuilds this bot alone and the other two keep running.
+			Kind:          serve.KindGatewayMax,
+			ConfigKey:     "gateways.max.enable",
+			BuildTag:      "gateway",
+			Available:     gateway.MaxAvailable,
+			NeedsSessions: true,
+			Enabled:       func(c *config.Config) bool { return c.Gateways.Max.Enabled },
+			Fingerprint:   gateway.MaxFingerprint,
+			Run: func(ctx context.Context, cfg *config.Config) error {
+				return gateway.ServeMax(ctx, gateway.Options{
+					Cfg: cfg, Mgr: rt.Mgr, Log: rt.Log,
+					DefaultCWD: rt.Paths.CWD, Mirror: rt, Prompts: rt, Wakes: rt,
+				})
+			},
+		},
+		{
+			Kind:       serve.KindSwarm,
+			ConfigKey:  "swarm.enable",
+			BuildTag:   "swarm",
+			Available:  swarm.Available,
+			Enabled:    func(c *config.Config) bool { return c.Swarm.Enabled },
+			RestartKey: deps.swarmListenAddr,
+			// The relay reads its settings when it starts, so one whose
+			// settings moved - saved from its own page or edited in the file -
+			// is rebuilt on them. Its registry lives in memory: the nodes
+			// register and open their tunnels again within seconds.
+			Fingerprint: swarmFingerprint,
+			Run: func(ctx context.Context, cfg *config.Config) error {
+				return swarm.Serve(ctx, swarm.Options{
+					Cfg: cfg, Log: rt.Log, Home: deps.home,
+					ListenAddr: deps.swarmListenAddr(cfg), ExtraAuthTokens: deps.swarmAuthTokens,
+					// The relay's own settings page saves through the runtime,
+					// which the supervisor watches like every other reload.
+					Live: rt.Cfg,
+					Install: func(c *config.Config) error {
+						if deps.adjust != nil {
+							if err := deps.adjust(c); err != nil {
+								return err
+							}
+						}
+						rt.ReplaceConfig(c)
+						return nil
+					},
+				})
+			},
+		},
+		{
+			Kind:          serve.KindScheduler,
+			ConfigKey:     "scheduler.enable",
+			BuildTag:      "scheduler",
+			Available:     scheduler.Available,
+			NeedsSessions: true,
+			Enabled:       func(c *config.Config) bool { return c.SchedulerEffectiveEnabled() },
+			// The daemon reads its jobs from disk, so a change to where it
+			// looks or how long a run may take needs a fresh one.
+			Fingerprint: schedulerFingerprint,
+			// The daemon follows the live configuration (rt.Cfg) itself.
+			Run: func(ctx context.Context, _ *config.Config) error {
+				// A finished run of a job reports into the conversation of the
+				// gateway's administrator, so a task the person scheduled reads
+				// where the conversation does, headed as the job's own message.
+				pool := bgtask.Default()
+				rt.WatchJobReports(pool, func(jobID string) string {
+					return jobDescription(rt.Cfg(), rt.Paths.CWD, jobID)
+				})
+
+				return scheduler.Serve(ctx, scheduler.Options{
+					Cfg: rt.Cfg, Log: rt.Log, ProcessCWD: rt.Paths.CWD,
+					Mgr: rt.Mgr, Pool: pool,
+				})
+			},
+		},
+		{
+			// Coddy for Browser rides the HTTP server: the extension's
+			// endpoint is mounted on its mux, so this subsystem runs nothing of
+			// its own. It is here so a binary without the tag refuses
+			// browser.enable by name, and so the banner and the status table
+			// name it; auxiliary, it never keeps the process up alone. It is
+			// on while the server accepts the extension (browser.enable with
+			// a key): a process that only uses the browsers of
+			// browser.remotes has no endpoint.
+			Kind:      serve.KindBrowser,
+			ConfigKey: "browser.enable",
+			BuildTag:  "browser",
+			Available: browser.Available,
+			Auxiliary: true,
+			// A binary without the module refuses browser.enable by name,
+			// remotes alone included.
+			Enabled: func(c *config.Config) bool {
+				if !browser.Available {
+					return c.Browser.Enable
+				}
+				return c.Browser.Serves()
+			},
+			Address: func(c *config.Config) string {
+				if deps.httpListenAddr == nil {
+					return ""
+				}
+				return deps.httpListenAddr(c)
+			},
+			Run: func(ctx context.Context, _ *config.Config) error {
+				<-ctx.Done()
+				return nil
+			},
+		},
+		metrics,
+	}
+}
+
+// swarmFingerprint is everything a rebuilt relay would read differently, apart
+// from its listen address, which RestartKey answers: a new address takes a new
+// process, anything else a new relay in this one.
+func swarmFingerprint(c *config.Config) string {
+	if c == nil {
+		return ""
+	}
+	s := c.Swarm
+	s.Host, s.Port = "", 0
+	raw, err := json.Marshal(s) //nolint:gosec // G117: a fingerprint compared in memory to decide a rebuild, never written out
+	if err != nil {
+		return ""
+	}
+	return string(raw)
+}
+
+// schedulerFingerprint is everything a rebuilt daemon would read differently.
+func schedulerFingerprint(c *config.Config) string {
+	if c == nil {
+		return ""
+	}
+	s := c.Scheduler
+	return strings.Join([]string{
+		strconv.FormatBool(s.Enabled), c.SchedulerUserDir(), s.Timeout,
+		strconv.Itoa(s.MaxQueue), strconv.Itoa(s.RetainSessions),
+	}, "\x00")
+}
+
+// needsSessions reports whether any enabled surface runs agent turns. A process
+// that only relays a swarm opens no session store and builds no manager.
+func needsSessions(enabled []serve.Subsystem) bool {
+	for _, sub := range enabled {
+		if sub.NeedsSessions {
+			return true
+		}
+	}
+	return false
+}
+
+// outOfBandTokens collects a credential from a flag and then the environment,
+// so it never has to be written into config.yaml.
+// outOfBandLogin reads the web sign-in account from the environment.
+//
+// There is deliberately no flag for it: a password on a command line is in
+// `ps` and in the shell history, which is the same reason --auth-token is
+// steered towards CODDY_HTTP_TOKEN. $CODDY_HOME/.env is the intended home, and
+// the config loader has already read that file by the time this runs.
+func outOfBandLogin() httpserver.LoginCredentials {
+	return httpserver.LoginCredentials{
+		User:     strings.TrimSpace(os.Getenv(httpserver.LoginUserEnvVar)),
+		Password: os.Getenv(httpserver.LoginPasswordEnvVar),
+	}
+}
+
+func outOfBandTokens(flagValue, envVar string) []string {
+	var out []string
+	if t := strings.TrimSpace(flagValue); t != "" {
+		out = append(out, t)
+	}
+	if t := strings.TrimSpace(os.Getenv(envVar)); t != "" {
+		out = append(out, t)
+	}
+	return out
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, v := range values {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
+}
+
+// printServeBanner says on w (stderr, from a start) what this process actually
+// started.
+//
+// One command that starts a different set of surfaces per config file is only
+// as clear as what it reports, so the reachable addresses and whether the API
+// is open are stated rather than left to be inferred from the logs.
+func printServeBanner(w io.Writer, cfg *config.Config, enabled []serve.Subsystem, httpAddr, swarmAddr string, extraAuth, extraLogin bool) {
+	_, _ = fmt.Fprintf(w, "coddy serve %s\n", version.Get())
+	for _, sub := range enabled {
+		switch sub.Kind {
+		case serve.KindHTTP:
+			_, _ = fmt.Fprintf(w, "  httpserver  http://%s  (%s)\n", httpAddr,
+				httpAuthSummary(cfg, extraAuth, extraLogin))
+		case serve.KindSwarm:
+			scheme := "http"
+			if cfg.Swarm.TLS.Enabled() {
+				scheme = "https"
+			}
+			_, _ = fmt.Fprintf(w, "  swarm       %s://%s  (relay)\n", scheme, swarmAddr)
+		case serve.KindGateway:
+			_, _ = fmt.Fprintf(w, "  gateway     telegram\n")
+		case serve.KindGatewayPachca:
+			_, _ = fmt.Fprintf(w, "  gateway     pachca\n")
+		case serve.KindGatewayMax:
+			_, _ = fmt.Fprintf(w, "  gateway     max\n")
+		case serve.KindScheduler:
+			_, _ = fmt.Fprintf(w, "  scheduler   %s\n", cfg.SchedulerUserDir())
+		case serve.KindBrowser:
+			served := "extension key"
+			if cfg.Browser.ServeRemote {
+				served += "; served to other processes at /coddy/browser/v1"
+			}
+			_, _ = fmt.Fprintf(w, "  browser     ws://%s/browser/v1/connect  (%s)\n", httpAddr, served)
+		case serve.KindMetrics:
+			// Whether a scrape needs a credential, never the credential.
+			auth := "no token"
+			if cfg.Metrics.HasToken() {
+				auth = "bearer token"
+			}
+			_, _ = fmt.Fprintf(w, "  metrics     http://%s/metrics  (%s)\n", cfg.Metrics.ListenAddr(), auth)
+		}
+	}
+}
