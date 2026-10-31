@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf16"
 
 	"github.com/EvilFreelancer/coddy-agent/internal/llm"
 )
@@ -33,6 +34,14 @@ const (
 	historyButton = "📜 Развернуть"
 	// historyTitle names the entry in the details store.
 	historyTitle = "История беседы"
+	// historySlack is the room kept under the platform limit. The card is built
+	// with a margin so a prefix or a note added later cannot push it over, and so
+	// a card that fits by our count is not refused by MAX's.
+	historySlack = 20
+	// historyFailedNote is what a person reads when the platform refuses the card
+	// itself: the switch happened, and the history they were promised is missing.
+	historyFailedNote = "Историю беседы не удалось отправить: MAX отказал по размеру " +
+		"сообщения. Она целиком есть в веб-интерфейсе."
 )
 
 // SetTranscript hands the bot the reader it asks for a session's messages. A nil
@@ -58,6 +67,7 @@ func historyCard(title string, msgs []llm.Message) string {
 		return head + "\nПока пусто: здесь ещё не было ни одного сообщения."
 	}
 
+	budget := maxTextRunes - historySlack
 	all := historyLines(msgs, historyTurns)
 	shown := all
 	for {
@@ -66,13 +76,13 @@ func historyCard(title string, msgs []llm.Message) string {
 			note = "\n" + historyNote(dropped)
 		}
 		text := head + "\n" + strings.Join(shown, "\n") + note
-		if len([]rune(text)) <= maxTextRunes {
+		if textUnits(text) <= budget {
 			return text
 		}
 		if len(shown) == 0 {
 			// The head alone does not fit, which only a very long title makes
 			// possible: it is the one part the card cannot give up.
-			return shortenRunes(head, maxTextRunes)
+			return clipUnits(head, budget)
 		}
 		shown = shown[:len(shown)-1]
 	}
@@ -238,10 +248,43 @@ func (b *Bot) postHistoryCard(ctx context.Context, c *Client, in inbound, id, ti
 		// A refusal of the platform leaves the person without the card they were
 		// promised, so it belongs in the log at a level somebody watches.
 		b.log.Warn("max: history card not delivered", "err", err, "session", id)
+		// Silence is what the reader cannot act on: the switch is confirmed and
+		// the history is simply absent. Say it in one line instead.
+		note := Outgoing{Target: b.answerTarget(in), Text: historyFailedNote}
+		if _, noteErr := c.Send(ctx, note); noteErr != nil {
+			b.log.Warn("max: history card refusal not told", "err", noteErr, "session", id)
+		}
 
 		return
 	}
 	b.log.Debug("max: history card posted", "session", id, "messages", len(msgs))
+}
+
+// textUnits is the length MAX itself measures: a text is refused when its UTF-16
+// code units pass the platform limit, not when its characters do. Every emoji a
+// line carries (🤖 for the agent, 👤 for the person) lies outside the basic
+// plane and costs two units, so thirty lines measured in runes fit while the same
+// thirty lines measured in units do not - and the card, promised to the reader,
+// was refused as too long.
+func textUnits(text string) int {
+	return len(utf16.Encode([]rune(text)))
+}
+
+// clipUnits cuts text until it fits the budget in the units the platform counts,
+// marking the cut so a reader knows there was more.
+func clipUnits(text string, budget int) string {
+	if textUnits(text) <= budget {
+		return text
+	}
+	runes := []rune(text)
+	for len(runes) > 0 {
+		runes = runes[:len(runes)-1]
+		if cut := string(runes) + "…"; textUnits(cut) <= budget {
+			return cut
+		}
+	}
+
+	return "…"
 }
 
 // shortenRunes cuts text to limit runes, marking the cut so a reader knows there

@@ -4,7 +4,7 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-19 files, 43 types, 254 functions; 284 of 297 carry a description in the code.
+19 files, 43 types, 256 functions; 286 of 299 carry a description in the code.
 
 ## Contents
 
@@ -15,7 +15,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — 1 types, 2 functions
 - [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 18 functions
 - [external/gateway/max/documents.go](#externalgatewaymaxdocumentsgo) — 1 types, 14 functions
-- [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — 1 types, 11 functions
+- [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — 1 types, 13 functions
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — 1 types, 19 functions
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — 1 types, 6 functions
 - [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — 1 types, 12 functions
@@ -227,6 +227,8 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func historyStamp(createdAt string) string` — historyStamp renders when a message was appended, in the shape the operator asked for: DD.MM.YY-hh:mm:ss, in the machine's own zone so it matches the clock on the wall rather than UTC. A message stored before the field existed has no time, and its line simply starts with the speaker.
 - `func historyTranscript(msgs []llm.Message) string` — historyTranscript is the whole conversation, for the button: every message with its speaker, in full, so a page can be read like the chat it came from. Newest first, exactly like the card it opens from. The card reads from the end of the conversation back, and opening it used to turn the conversation round: the same messages arrived oldest first, so the last thing said appeared below everything else and the reader had to scroll to the end of a long page to find out where they were. The order is the card's order; the button only shows more of it.
 - `func (b *Bot) postHistoryCard(ctx context.Context, c *Client, in inbound, id, title string)` — postHistoryCard puts the card of the conversation the chat was just switched to into that chat. It says nothing when no reader is wired: a switch then reads as it did before.
+- `func textUnits(text string) int` — textUnits is the length MAX itself measures: a text is refused when its UTF-16 code units pass the platform limit, not when its characters do. Every emoji a line carries (🤖 for the agent, 👤 for the person) lies outside the basic plane and costs two units, so thirty lines measured in runes fit while the same thirty lines measured in units do not - and the card, promised to the reader, was refused as too long.
+- `func clipUnits(text string, budget int) string` — clipUnits cuts text until it fits the budget in the units the platform counts, marking the cut so a reader knows there was more.
 - `func shortenRunes(text string, limit int) string` — shortenRunes cuts text to limit runes, marking the cut so a reader knows there was more.
 
 ## external/gateway/max/incoming.go

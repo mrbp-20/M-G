@@ -155,14 +155,54 @@ func TestHistoryCard_KeepsTheCardInsideOneMessage(t *testing.T) {
 
 	card := historyCard("Проект Max-Gate", msgs)
 
-	if got := len([]rune(card)); got > maxTextRunes {
-		t.Fatalf("card = %d runes, want at most %d: MAX refuses a longer text", got, maxTextRunes)
+	if got := textUnits(card); got > maxTextRunes {
+		t.Fatalf("card = %d UTF-16 units, want at most %d: MAX counts units, not characters", got, maxTextRunes)
 	}
 	if !strings.Contains(card, "🤖") {
 		t.Fatalf("card = %q, want the newest line kept", card)
 	}
 	if !strings.Contains(card, "…и ещё") || !strings.Contains(card, historyButton) {
 		t.Fatalf("card = %q, want a note counting the lines left out", card)
+	}
+}
+
+func TestHistoryCard_FitsTheUnitsThePlatformCounts(t *testing.T) {
+	// The case from the field: thirty lines of a hundred-odd characters each fit
+	// our own ruler, and MAX still refused the card, because it counts UTF-16 code
+	// units and every 🤖/👤 marker costs two. A card that passes here must pass
+	// there, with the slack the builder keeps under the limit.
+	msgs := make([]llm.Message, 0, historyTurns)
+	for i := 0; i < historyTurns; i++ {
+		msgs = append(msgs, llm.Message{
+			Role:      llm.RoleAssistant,
+			Content:   strings.Repeat("я", 200),
+			CreatedAt: "2026-10-31T20:30:00+03:00",
+		})
+	}
+
+	card := historyCard("Вёрста, у нас периодически возникают проблемы с поиском", msgs)
+
+	if got := textUnits(card); got > maxTextRunes {
+		t.Fatalf("card = %d UTF-16 units, want at most %d", got, maxTextRunes)
+	}
+	if runes := len([]rune(card)); textUnits(card) <= runes {
+		t.Fatalf("card = %d runes and %d units: the emoji markers are not being counted as units", runes, textUnits(card))
+	}
+	if !strings.Contains(card, "── беседа") {
+		t.Fatalf("card = %q, want the divider kept", card)
+	}
+}
+
+func TestClipUnits_CountsUnitsNotRunes(t *testing.T) {
+	// Sixty 🤖 are sixty characters and a hundred and twenty units: cutting by
+	// characters would leave a text the platform refuses.
+	text := strings.Repeat("🤖", 60)
+	got := clipUnits(text, 100)
+	if n := textUnits(got); n > 100 {
+		t.Fatalf("clipUnits = %d units, want at most 100", n)
+	}
+	if !strings.HasSuffix(got, "…") {
+		t.Fatalf("clipUnits = %q, want a marked cut", got)
 	}
 }
 

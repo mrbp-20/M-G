@@ -4,7 +4,7 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 19, типов: 43, функций: 254; с описанием в коде: 284 из 297.
+Файлов: 19, типов: 43, функций: 256; с описанием в коде: 286 из 299.
 
 ## Содержание
 
@@ -15,7 +15,7 @@
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — типов: 1, функций: 2
 - [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — типов: 2, функций: 18
 - [external/gateway/max/documents.go](#externalgatewaymaxdocumentsgo) — типов: 1, функций: 14
-- [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — типов: 1, функций: 11
+- [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — типов: 1, функций: 13
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — типов: 1, функций: 19
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — типов: 1, функций: 6
 - [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 12
@@ -227,6 +227,8 @@
 - `func historyStamp(createdAt string) string` — historyStamp renders when a message was appended, in the shape the operator asked for: DD.MM.YY-hh:mm:ss, in the machine's own zone so it matches the clock on the wall rather than UTC. A message stored before the field existed has no time, and its line simply starts with the speaker.
 - `func historyTranscript(msgs []llm.Message) string` — historyTranscript is the whole conversation, for the button: every message with its speaker, in full, so a page can be read like the chat it came from. Newest first, exactly like the card it opens from. The card reads from the end of the conversation back, and opening it used to turn the conversation round: the same messages arrived oldest first, so the last thing said appeared below everything else and the reader had to scroll to the end of a long page to find out where they were. The order is the card's order; the button only shows more of it.
 - `func (b *Bot) postHistoryCard(ctx context.Context, c *Client, in inbound, id, title string)` — postHistoryCard puts the card of the conversation the chat was just switched to into that chat. It says nothing when no reader is wired: a switch then reads as it did before.
+- `func textUnits(text string) int` — textUnits is the length MAX itself measures: a text is refused when its UTF-16 code units pass the platform limit, not when its characters do. Every emoji a line carries (🤖 for the agent, 👤 for the person) lies outside the basic plane and costs two units, so thirty lines measured in runes fit while the same thirty lines measured in units do not - and the card, promised to the reader, was refused as too long.
+- `func clipUnits(text string, budget int) string` — clipUnits cuts text until it fits the budget in the units the platform counts, marking the cut so a reader knows there was more.
 - `func shortenRunes(text string, limit int) string` — shortenRunes cuts text to limit runes, marking the cut so a reader knows there was more.
 
 ## external/gateway/max/incoming.go
