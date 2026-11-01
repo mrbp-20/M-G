@@ -128,7 +128,7 @@ func (b *Bot) handleMessage(ctx context.Context, u Update) error {
 		"text_len", len(m.Body.Text),
 	)
 
-	text := strings.TrimSpace(m.Body.Text)
+	text := strings.TrimSpace(dropInvisible(m.Body.Text))
 	images, imgErr := m.ImageAttachments()
 	if imgErr != nil {
 		b.log.Debug("max: update has malformed attachments", "err", imgErr,
@@ -142,8 +142,14 @@ func (b *Bot) handleMessage(ctx context.Context, u Update) error {
 	in := inbound{chatID: chatID, userID: userID, isGroup: isGroup, text: text, images: images, files: files, parts: 1}
 	in.command, in.args = parseCommand(text)
 	if in.command != "" && !knownCommand(in.command) {
-		b.log.Debug("max: update ignored", "reason", "unknown command", "command", in.command)
-		return nil
+		// A slash-word we do not know is somebody else's command, and silence is
+		// the right answer to a bot - bots were let go above. From a person it is
+		// a question that happens to quote a line beginning with a slash: dropping
+		// it left them with nothing at all, neither an answer nor a word about
+		// why. Such a message goes to the agent the way it was written.
+		b.log.Debug("max: not a gateway command, the message goes to the agent as text",
+			"command", in.command, "user", userID, "chat", chatID)
+		in.command, in.args = "", ""
 	}
 
 	isolation := access.EffectiveIsolation(chatID, b.cfg)

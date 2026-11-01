@@ -597,3 +597,37 @@ func TestHandleSaysTheChatIsBusyInRussian(t *testing.T) {
 	}
 	t.Fatalf("no message said the chat is busy; sent: %+v", f.sends())
 }
+
+// TestAnUnknownSlashWord_ReachesTheAgentAsText is the defect of 01.11: a person
+// quoted a line of ours that began with a slash, MAX hid the slash behind an
+// invisible character, and the whole message was thrown away as somebody else's
+// command - one answer, then silence, and not even a word about why.
+func TestAnUnknownSlashWord_ReachesTheAgentAsText(t *testing.T) {
+	r := newStubRunner()
+	b := newTestBot(r)
+	text := "/\ufeffrpa-feat (фича по BDD),\n\nА что это у нас такое? Расскажи мне поподробнее."
+
+	if err := b.Handle(context.Background(), inboundMsg("m1", text)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	got := r.waitTurn(t)
+	want := "/rpa-feat (фича по BDD),\n\nА что это у нас такое? Расскажи мне поподробнее."
+	if got != want {
+		t.Fatalf("prompt = %q, want %q", got, want)
+	}
+}
+
+// TestASettingsCommandWithAnInvisibleRune_IsStillACommand: the same character
+// must not turn "/think" into prose, because the session reads its settings
+// commands off the very text the gateway hands it.
+func TestASettingsCommandWithAnInvisibleRune_IsStillACommand(t *testing.T) {
+	r := newStubRunner()
+	b := newTestBot(r)
+
+	if err := b.Handle(context.Background(), inboundMsg("m1", "/\ufeffthink")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got := r.waitTurn(t); got != "/think" {
+		t.Fatalf("prompt = %q, want %q", got, "/think")
+	}
+}

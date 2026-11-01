@@ -480,3 +480,34 @@ func TestGroupDigits(t *testing.T) {
 		}
 	}
 }
+
+// TestParseCommand_TheInvisibleSpaceOfAQuoteIsNotPartOfTheWord: MAX puts a
+// zero-width no-break space behind a slash it quotes, so a quoted "/rpa-feat"
+// comes back as "/\ufeffrpa-feat" - the word behind the slash named no command
+// anybody knows, and the message was dropped whole.
+func TestParseCommand_TheInvisibleSpaceOfAQuoteIsNotPartOfTheWord(t *testing.T) {
+	cmd, args := parseCommand("/\ufeffrpa-feat (фича по BDD),\n\nА что это у нас такое?")
+	if cmd != "rpa-feat" {
+		t.Fatalf("command = %q, want %q", cmd, "rpa-feat")
+	}
+	if args != "(фича по BDD),\n\nА что это у нас такое?" {
+		t.Fatalf("args = %q, want the rest of the message kept", args)
+	}
+}
+
+// TestParseCommand_DropsEveryInvisibleRune: an invisible character means nothing
+// to a reader, so none of them may decide whether a message is a command -
+// neither in front of the slash, nor behind it, nor inside the word.
+func TestParseCommand_DropsEveryInvisibleRune(t *testing.T) {
+	for _, r := range []rune{'\uFEFF', '\u200B', '\u200C', '\u200D', '\u2060', '\u00AD'} {
+		if cmd, _ := parseCommand("/" + string(r) + "think"); cmd != "think" {
+			t.Errorf("command with %U behind the slash = %q, want %q", r, cmd, "think")
+		}
+		if cmd, _ := parseCommand(string(r) + "/think"); cmd != "think" {
+			t.Errorf("command with %U in front of the slash = %q, want %q", r, cmd, "think")
+		}
+		if cmd, _ := parseCommand("/thi" + string(r) + "nk"); cmd != "think" {
+			t.Errorf("command with %U inside the word = %q, want %q", r, cmd, "think")
+		}
+	}
+}

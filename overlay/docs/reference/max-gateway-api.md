@@ -4,14 +4,14 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-19 files, 43 types, 256 functions; 286 of 299 carry a description in the code.
+19 files, 43 types, 259 functions; 289 of 302 carry a description in the code.
 
 ## Contents
 
 - [external/gateway/max/bot.go](#externalgatewaymaxbotgo) — 3 types, 14 functions
 - [external/gateway/max/burst.go](#externalgatewaymaxburstgo) — 2 types, 6 functions
 - [external/gateway/max/client.go](#externalgatewaymaxclientgo) — 5 types, 35 functions
-- [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — 1 types, 19 functions
+- [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — 1 types, 22 functions
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — 1 types, 2 functions
 - [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 18 functions
 - [external/gateway/max/documents.go](#externalgatewaymaxdocumentsgo) — 1 types, 14 functions
@@ -128,6 +128,9 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 ### Functions
 
 - `func parseCommand(text string) (string, string)` — parseCommand splits "/word rest" into its command word and the rest.
+- `func invisibleRune(r rune) bool` — invisibleRune reports the characters a reader cannot see and that must not decide whether a message is a command. MAX puts a zero-width no-break space behind a slash it quotes, so a quoted "/rpa-feat" comes back as "/\ufeffrpa-feat": the slash still leads and the word behind it is no command anybody knows, and the message was dropped whole.
+- `func trimInvisible(s string) string` — trimInvisible cuts the invisible characters from both ends of s.
+- `func dropInvisible(s string) string` — dropInvisible removes the invisible characters from anywhere in s: a quote of a line we sent carries the zero-width guards we put between the letters of a host name, and none of them means anything to a reader.
 - `func knownCommand(cmd string) bool` — knownCommand reports whether cmd is a built-in command or a settings command the bot hands to the session. Anything else that starts with a slash is somebody else's command and is ignored.
 - `func changesSettings(cmd string) bool` — changesSettings reports whether cmd changes the session's settings or replaces the conversation.
 - `func adminEverywhere(cmd string) bool` — adminEverywhere reports the settings that belong to the admins in every chat, not only where the conversation is shared. Moving a chat to another model and throwing a conversation away are not the same as picking a mode for a turn: the first decides what every later turn costs, the second destroys history. A group has always been guarded; a personal chat is where the plain user lives, and the model menu there was the one door left open (29.10.2026).

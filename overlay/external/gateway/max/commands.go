@@ -24,15 +24,48 @@ import (
 
 // parseCommand splits "/word rest" into its command word and the rest.
 func parseCommand(text string) (string, string) {
+	text = trimInvisible(strings.TrimSpace(text))
 	if !strings.HasPrefix(text, "/") {
 		return "", ""
 	}
 	word, rest, _ := strings.Cut(text[1:], " ")
-	word = strings.ToLower(strings.TrimSpace(word))
+	word = strings.ToLower(dropInvisible(strings.TrimSpace(word)))
 	if word == "" || strings.ContainsAny(word, "/\n\t") {
 		return "", ""
 	}
 	return word, strings.TrimSpace(rest)
+}
+
+// invisibleRune reports the characters a reader cannot see and that must not
+// decide whether a message is a command. MAX puts a zero-width no-break space
+// behind a slash it quotes, so a quoted "/rpa-feat" comes back as
+// "/\ufeffrpa-feat": the slash still leads and the word behind it is no command
+// anybody knows, and the message was dropped whole.
+func invisibleRune(r rune) bool {
+	switch r {
+	case '\uFEFF', '\u200B', '\u200C', '\u200D', '\u2060', '\u00AD':
+		return true
+	}
+
+	return false
+}
+
+// trimInvisible cuts the invisible characters from both ends of s.
+func trimInvisible(s string) string {
+	return strings.TrimFunc(s, invisibleRune)
+}
+
+// dropInvisible removes the invisible characters from anywhere in s: a quote of
+// a line we sent carries the zero-width guards we put between the letters of a
+// host name, and none of them means anything to a reader.
+func dropInvisible(s string) string {
+	return strings.Map(func(r rune) rune {
+		if invisibleRune(r) {
+			return -1
+		}
+
+		return r
+	}, s)
 }
 
 // knownCommand reports whether cmd is a built-in command or a settings
