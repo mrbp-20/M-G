@@ -496,6 +496,12 @@ with `--install` / `-Install` - the other two keys never touch a running service
 MIT. Coddy — `Copyright (c) 2026 Pavel Rykov`.
 Max-Gate-Coddy — `Copyright (c) 2026 Versta-AI-Coder and Vladimir A.G.`
 
+The `LICENSE` file itself carries only these two copyright lines, in the standard shape: that is
+what lets GitHub recognise the licence as MIT instead of an unknown one. The scope of the layer
+(the MAX gateway in `external/gateway/max`, the hooks it needs in the shared files and the
+documentation) is described here rather than in the licence, because any explanatory sentence
+inside the header defeats the recogniser.
+
 `LICENSE` sits in two places: the package root and inside `overlay/LICENSE`. The text is the same. The
 root one is the licence of the package itself; the inner one replaces `LICENSE` in the Coddy tree when
 the layer is applied, so the built product carries the same authorship line. Change one, change the

@@ -482,8 +482,13 @@ Coddy, а `RELEASE` говорит, какой выпуск пакета пер�
 
 ## Лицензия и авторы
 
-MIT. Coddy — `Copyright (c) 2026 Pavel Rykov`. 
-Max-Gate-Coddy —`Copyright (c) 2026 Versta-AI-Coder and Vladimir A.G.`
+MIT. Coddy — `Copyright (c) 2026 Pavel Rykov`.
+Max-Gate-Coddy — `Copyright (c) 2026 Versta-AI-Coder and Vladimir A.G.`
+
+В самом файле `LICENSE` стоят только эти две строки авторства, стандартной формы: так GitHub
+распознаёт лицензию как MIT, а не как «неизвестную». Объём слоя (шлюз МАКС в `external/gateway/max`,
+его зацепки в общих файлах и документация) описан не в лицензии, а здесь, потому что любая
+пояснительная фраза внутри шапки мешает распознавателю.
 
 `LICENSE` лежит в двух местах: в корне пакета и внутри `overlay/LICENSE`. Текст у них один и тот же.
 Корневой — лицензия самого пакета; внутренний при накате заменяет `LICENSE` в дереве Coddy, чтобы
