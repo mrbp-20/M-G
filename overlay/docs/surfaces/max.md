@@ -114,11 +114,23 @@ The bot sees who wrote every message. Its admins (`admins`) can do everything; a
 
 ## Answers, limits and formatting
 
-A message that arrives while the session's previous turn is still running waits for its place: the turns of one session are serialized, and the message is taken as soon as the turn ends. Only when the wait runs out - about half a minute - the chat is told, in Russian, to send the message again; the internal "session busy" text never reaches the person.
+A message that arrives while the session's previous turn is still running waits for its place: the turns
+of one session are serialized, and the message is taken as soon as the turn ends. It is never thrown
+away for being early: the wait lasts as long as the other turn does - up to half an hour - and after a
+couple of seconds the chat gets the promise that the message was taken and will run by itself. A session
+standing on a question says so in that promise, because then the person is the one being waited for.
+Only when half an hour runs out the chat is told, in Russian, that the message was not run at all; the
+internal "session busy" text never reaches the person.
 
 The gateway is transparent both ways. A message typed in MAX runs in the session the chat is bound to, and a turn somebody starts on another surface - the browser, the console - is published into that chat as well, with the person's own line shown there first: an answer without the question it replies to reads as a monologue. A turn this chat started is left alone, so nothing is shown twice. A question with options and a permission prompt go to both surfaces at once: the first answer decides, and the other prompt is withdrawn with the note «✅ Ответ дан в другом окне.», so a keyboard nobody can use any more does not hang there.
 
 A question card also carries the button «✍️ Свой ответ» - the same thing the browser's free-answer field is. Pressed, the card is rewritten: the buttons come off, «✍️ Свой ответ: напишите его следующим сообщением.» appears at the bottom, and the next message of this chat becomes the answer to the question. Once only: the message after that is an ordinary turn again. A command is never an answer - it runs as a command and the wait ends. The wait lasts exactly as long as the question: the turn ends, the card goes with «Больше не жду.». A message that carries no text, a picture or a file, is not the answer either: the card says the same thing again and waits for text.
+
+A question the page asked before the chat was attached is not lost on the chat: switching into such a
+conversation asks the same question here, and the answer from either surface ends the wait for both -
+the card of the other one closes with «✅ Ответ дан в другом окне.» The question comes after the
+switch card, never before it, and a switch into a conversation that stands still on a question says
+«в беседе ждёт ответа вопрос — карточка ниже» instead of calling that work.
 
 A line and the picture it is about are two messages of MAX, a second or two apart, and the bot holds both for a moment - three seconds, restarted with every new message of the chat - so they run as one turn: the answer covers the text and the picture together, instead of answering the text and then taking the picture as a separate question. A command never waits: it is answered at once, and whatever the chat held before it goes first, so the order of what was written stays the order of what is answered. The wait only delays the start of the turn; what is held has already passed the polling cursor, so a stop hands it over instead of losing it.
 

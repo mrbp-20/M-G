@@ -50,6 +50,10 @@ const (
 	// noteTurnBusy is the line a resume adds when the session it opens is
 	// running a turn: the switch itself is safe, the message sent next waits.
 	noteTurnBusy = "в беседе идёт работа — продолжит, когда закончит"
+	// noteTurnWaiting is the same line for a session that is not working but
+	// standing still on a question: saying "work is going on" then hides the one
+	// thing the person has to do, and the card with the question follows below.
+	noteTurnWaiting = "в беседе ждёт ответа вопрос — карточка ниже"
 )
 
 // resumePickPrefix precedes the session in the payload of a session button.
@@ -116,6 +120,7 @@ func (b *Bot) handleResume(ctx context.Context, in inbound, key, args string) {
 	case 1:
 		text, _ := b.resumeSessionRow(ctx, in, matches[0])
 		b.resumeReply(ctx, c, in, text)
+		b.reaskAfterSwitch(ctx, in, matches[0].SessionID)
 	default:
 		b.sendResumeMenu(ctx, c, in, b.resumeMenu(matches, current, 0, query))
 	}
@@ -223,6 +228,7 @@ func (b *Bot) confirmResume(ctx context.Context, c *Client, u Update, in inbound
 	}
 	if b.store.Peek(b.sessionKey(in)) == row.SessionID {
 		b.postHistoryCard(ctx, c, in, row.SessionID, b.resumeLabel(row))
+		b.reaskAfterSwitch(ctx, in, row.SessionID)
 	}
 }
 
@@ -247,6 +253,7 @@ func (b *Bot) resumeSession(ctx context.Context, c *Client, in inbound, id strin
 	// that says which conversation is now on the other side of it.
 	if b.store.Peek(b.sessionKey(in)) == row.SessionID {
 		b.postHistoryCard(ctx, c, in, row.SessionID, b.resumeLabel(row))
+		b.reaskAfterSwitch(ctx, in, row.SessionID)
 	}
 }
 
@@ -289,15 +296,35 @@ func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionL
 		b.log.Info("max: the running turn left the chat with the switch",
 			"new", id, "user", in.userID, "chat", in.chatID, "turns", stopped)
 	}
-
 	text := "▶️ Продолжаю: " + b.resumeLabel(row) + "\n" + id
 	if line := resumeSettingsLine(b.runner.Cfg(), st); line != "" {
 		text += "\n" + line
 	}
 	if b.turnActive(id) {
-		text += "\n" + noteTurnBusy
+		text += "\n" + b.busyNoteFor(id)
 	}
 	return text, [][]Button{}
+}
+
+// busyNoteFor says what a busy session is busy with. A turn standing still on a
+// question is not work: the person is the one being waited for, and telling them
+// "work is going on" hides the only thing they can do about it.
+func (b *Bot) busyNoteFor(sessionID string) string {
+	if _, waiting := session.WaitingQuestionOf(sessionID); waiting {
+		return noteTurnWaiting
+	}
+
+	return noteTurnBusy
+}
+
+// reaskAfterSwitch asks the chat the question the session is waiting for, once the
+// switch has said its own words: a question that arrives before the card it belongs
+// to reads as if the chat had been waiting all along (reask.go).
+func (b *Bot) reaskAfterSwitch(ctx context.Context, in inbound, sessionID string) {
+	if strings.TrimSpace(sessionID) == "" {
+		return
+	}
+	go b.reaskQuestion(context.WithoutCancel(ctx), in, sessionID)
 }
 
 // resumeMenu is one page of the keyboard with the text above it.

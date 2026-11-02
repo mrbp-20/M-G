@@ -24,6 +24,11 @@ The default branch `main` is the gateway. The upstream Coddy overview, install o
 - A line and the picture sent right after it arrive as two MAX messages; the bot holds them for a moment and runs them as one turn, so the answer covers both.
 - A tool call is a message of its own, named by what it ran when the agent reports it - the command of a run, the path of a read: `🔍 Подробности` opens the command and what it returned, page by page.
 - The conversation is transparent both ways: a turn started in the web UI is published into the chat its session is bound to, with the person's own line marked `🌐`.
+- A message that arrives while somebody else's turn holds the conversation is never dropped: the bot answers
+  «⏳ Принял…» at once and runs the message by itself as soon as the conversation is free. It waits as long
+  as that turn runs - up to half an hour; a conversation standing on a question says so in that promise.
+- A question asked in the browser before the chat was attached is asked in the chat too: either surface can
+  answer it, and the second card closes with «Ответ дан в другом окне» (answered in the other window).
 
 ## Get a bot token and your MAX user id
 

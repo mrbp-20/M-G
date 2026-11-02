@@ -1,6 +1,6 @@
 # MAX gateway for Coddy — an overlay layer
 
-This is not a copy of Coddy: a layer of 160 files adds a gateway for the MAX messenger to Coddy. Coddy
+This is not a copy of Coddy: a layer of 166 files adds a gateway for the MAX messenger to Coddy. Coddy
 itself comes from its own repository —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,
 after which a build with the `gateway.max` tag produces a binary with the gateway.
@@ -9,7 +9,7 @@ after which a build with the `gateway.max` tag produces a binary with the gatewa
 
 | Item | Why |
 |---|---|
-| `overlay/` | 160 files at the same paths as in Coddy: 112 new and 48 replaced |
+| `overlay/` | 166 files at the same paths as in Coddy: 117 new and 49 replaced |
 | `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.3.62 file, sha256 of ours |
 | `apply.sh` | version check, layer application, build (Linux, WSL2) |
 | `apply.ps1`, `apply.cmd` | the same for Windows: PowerShell and a cmd wrapper |
@@ -19,6 +19,11 @@ after which a build with the `gateway.max` tag produces a binary with the gatewa
 Beside the code the layer carries its documents: `docs/surfaces/max.md` with its Russian twin,
 `docs/MAX-OVERLAY.md` (the layer map: what lies where and why), `docs/max-dossier/` (the MAX platform
 dossier), the checks in `.github/workflows/`, and the acceptance test `features/gateway_max.feature`.
+
+The gateway's behaviour is described in `docs/surfaces/max.md` with its Russian twin: a message sent to
+a busy conversation is kept and waits for its turn with a promise in the chat, a browser question is
+asked in the chat again after a switch, and the switch card says the conversation waits for an answer
+instead of calling that work.
 
 ## What you need
 
@@ -259,16 +264,16 @@ What it prints on success.
 The compatibility check — four lines, nothing written, exit code 0:
 
 ```
-слой: 161 строка манифеста (с заголовком), база Coddy 1.3.62
+слой: 167 строк манифеста (с заголовком), база Coddy 1.3.62
 клон: C:\coddy-src
-сверка: все 160 файлов слоя совместимы с этим клоном
+сверка: все 166 файлов слоя совместимы с этим клоном
 проверка пройдена (-Check: ничего не изменено)
 ```
 
 Applying the layer adds how many files were replaced:
 
 ```
-наложено файлов: 160
+наложено файлов: 166
 
 дальше:
   .\apply.ps1 -Coddy "C:\coddy-src" -Build   # или собрать вручную:
@@ -288,7 +293,7 @@ returns code 2:
 
 ```
 СЛОЙ НЕ ПОДХОДИТ К ЭТОЙ ВЕРСИИ CODDY
-  изменённых файлов не совпало: 7 из 160, отсутствует: 0
+  изменённых файлов не совпало: 7 из 166, отсутствует: 0
     internal/agent/react.go
     ...
 Нужен Coddy 1.3.62 (коммит 902ee08f).
@@ -296,8 +301,8 @@ returns code 2:
 ```
 
 The lines are Russian because the installer speaks to the person in Russian; this page is their English
-translation: "layer: 161 manifest rows (with the header), Coddy base 1.3.62", "clone: …", "check: all 160
-files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 160",
+translation: "layer: 167 manifest rows (with the header), Coddy base 1.3.62", "clone: …", "check: all 166
+files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 166",
 "building", "done", and, on a mismatch, "THE LAYER DOES NOT FIT THIS CODDY VERSION".
 
 ## Running it again after an interruption
@@ -309,13 +314,13 @@ command is expected - the installer looks at what is already done and continues:
   version, the work continues in it ("клон уже на месте... продолжаю с ним"); a different version gets
   a clear message and the command to fix it;
 - files already in place and matching the layer are not copied again, so you end up with
-  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 160";
+  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 166";
 - a file damaged after the overlay is restored ("восстановлено после обрыва: N");
 - `--check` / `-Check` on a finished tree answers "слой уже наложен полностью".
 
 ## What apply.sh does
 
-1. **Checks the version.** For each of the 160 layer files it computes sha256 and compares it with the
+1. **Checks the version.** For each of the 166 layer files it computes sha256 and compares it with the
    one recorded in `MANIFEST.tsv` as the Coddy 1.3.62 file. A mismatch means the layer is not applied at
    all: the script prints which files diverged and suggests the version to take.
 2. **Copies** the `overlay/` files into the clone and, after each copy, compares sha256 with ours.

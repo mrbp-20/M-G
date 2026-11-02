@@ -22,6 +22,27 @@ type Update struct {
 	User       *User           `json:"user"`
 	Message    json.RawMessage `json:"message"`
 	Callback   json.RawMessage `json:"callback"`
+
+	// wire is the update exactly as the platform sent it. The fields above are
+	// what this adapter reads, and marshalling them back would drop every field
+	// the struct does not name - the one thing a diagnostic must never do, since
+	// the whole point is to see what arrives rather than what we understand.
+	wire json.RawMessage
+}
+
+// UnmarshalJSON keeps the original bytes beside the parsed fields: a field the
+// platform sent under a name this struct does not know stays visible in the log.
+func (u *Update) UnmarshalJSON(data []byte) error {
+	type plain Update
+
+	var p plain
+	if err := json.Unmarshal(data, &p); err != nil {
+		return err
+	}
+	*u = Update(p)
+	u.wire = append(u.wire[:0], data...)
+
+	return nil
 }
 
 // Body parses the message of a message_created or message_edited update.
@@ -74,6 +95,30 @@ func (u Update) MessageKey() string {
 	}
 
 	return m.Body.Mid
+}
+
+// fallbackKey names a message the platform left without an id: MAX sends a voice
+// message exactly like that. Such a message must still be answered, and answered
+// once, so the name is built from what the update does carry - it repeats only
+// when the same person sends the same amount of text in the same second.
+func (u Update) fallbackKey() string {
+	m, err := u.Body()
+	if err != nil {
+		return ""
+	}
+	chatID := m.Recipient.ChatID
+	if chatID == 0 {
+		chatID = u.ChatID
+	}
+	userID := m.Sender.UserID
+	if userID == 0 {
+		userID = u.UserID
+	}
+	if chatID == 0 && userID == 0 && m.Timestamp == 0 {
+		return ""
+	}
+
+	return fmt.Sprintf("%d|%d|%d|%d", chatID, userID, m.Timestamp, len(m.Body.Text))
 }
 
 // Message is the part of a MAX message the bot reads.

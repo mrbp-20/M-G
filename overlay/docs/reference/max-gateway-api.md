@@ -4,7 +4,7 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-19 files, 43 types, 259 functions; 289 of 302 carry a description in the code.
+20 files, 43 types, 268 functions; 297 of 311 carry a description in the code.
 
 ## Contents
 
@@ -13,17 +13,18 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/client.go](#externalgatewaymaxclientgo) — 5 types, 35 functions
 - [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — 1 types, 22 functions
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — 1 types, 2 functions
-- [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 18 functions
+- [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 20 functions
 - [external/gateway/max/documents.go](#externalgatewaymaxdocumentsgo) — 1 types, 14 functions
 - [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — 1 types, 13 functions
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — 1 types, 19 functions
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — 1 types, 6 functions
 - [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — 1 types, 12 functions
-- [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — 12 types, 7 functions
+- [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — 12 types, 9 functions
 - [external/gateway/max/nopreview.go](#externalgatewaymaxnopreviewgo) — 0 types, 2 functions
 - [external/gateway/max/pictures.go](#externalgatewaymaxpicturesgo) — 1 types, 2 functions
 - [external/gateway/max/poll.go](#externalgatewaymaxpollgo) — 1 types, 3 functions
-- [external/gateway/max/resume.go](#externalgatewaymaxresumego) — 4 types, 22 functions
+- [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — 0 types, 3 functions
+- [external/gateway/max/resume.go](#externalgatewaymaxresumego) — 4 types, 24 functions
 - [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — 4 types, 38 functions
 - [external/gateway/max/stop.go](#externalgatewaymaxstopgo) — 0 types, 9 functions
 - [external/gateway/max/tooldetails.go](#externalgatewaymaxtooldetailsgo) — 2 types, 15 functions
@@ -166,7 +167,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 ### Types
 
 - `type inbound struct` — inbound is a message the bot will answer.
-- `type seenIDs struct` — seenIDs remembers recently handled message ids, so a message MAX delivered twice runs one turn.
+- `type seenIDs struct` — _no description in the code_
 
 ### Functions
 
@@ -180,11 +181,13 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (b *Bot) enqueue(ctx context.Context, in inbound, key string) (accepted, queued bool)` — enqueue hands a message to the worker of its session key, so one session runs one turn at a time. It reports false when the bot is stopping: the message then stays in the stream for the next process. A queued message counts as in flight from here.
 - `func (b *Bot) sessionWorker(ctx context.Context, ch chan workerJob)` — _no description in the code_
 - `func (b *Bot) processMessage(ctx context.Context, in inbound, key string)` — processMessage runs the turn of one message in the worker of its session key.
-- `func (b *Bot) runTurn(ctx context.Context, params acp.SessionPromptParams, sender acp.UpdateSender, opts *session.PromptRunOpts) (*acp.SessionPromptResult, error)` — runTurn runs one turn, waiting out a session whose previous turn has not finished yet.
+- `func (b *Bot) waitNote(sessionID string) string` — waitNote is the promise a chat gets while its message waits for somebody else's turn: the message is kept, and it runs by itself once the session is free. A session standing on a question is not working, and saying "work is going on" there would hide the only thing the person has to do.
+- `func (b *Bot) runTurn(ctx context.Context, params acp.SessionPromptParams, sender acp.UpdateSender, opts *session.PromptRunOpts, onBusy func()) (*acp.SessionPromptResult, error)` — runTurn runs one turn, waiting out a session whose previous turn has not finished yet.
 - `func (b *Bot) answerTarget(in inbound) Target` — answerTarget is where the answer to in goes.
 - `func (b *Bot) reply(ctx context.Context, in inbound, text string)` — reply posts a short service message into the chat the message came from.
 - `func (b *Bot) ensureSession(ctx context.Context, key string) (*session.State, error)` — ensureSession gets or creates the session for key. A conversation this gateway starts is stamped with where it came from.
 - `func (b *Bot) applyInitialModel(ctx context.Context, st *session.State)` — applyInitialModel stamps the gateway's own model on a session that is just beginning: the model last picked on this surface, or the alphabetically first configured one. A session that already chose keeps its model.
+- `func rawUpdate(u Update) string` — rawUpdate is the update as it came off the wire, cut to a readable length. The bytes kept at parse time are preferred: marshalling our own struct back would hide a field the struct does not name.
 - `func newSeenIDs(limit int) *seenIDs` — _no description in the code_
 - `func (s *seenIDs) add(id string) bool` — add records id and reports whether it was new.
 - `func surfaceSystemPrompt() string { return maxGuidance }` — surfaceSystemPrompt is what the gateway hands the session for one turn.
@@ -317,10 +320,12 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 
 ### Functions
 
+- `func (u *Update) UnmarshalJSON(data []byte) error` — UnmarshalJSON keeps the original bytes beside the parsed fields: a field the platform sent under a name this struct does not know stays visible in the log.
 - `func (u Update) Body() (Message, error)` — Body parses the message of a message_created or message_edited update.
 - `func (u Update) Pressed() (Callback, error)` — Pressed parses the callback of a message_callback update: Payload is what the button carried, CallbackID answers the press.
 - `func (u Update) From() User` — From is the person an update came from: the update's own user when it carries one, the message's sender otherwise.
 - `func (u Update) MessageKey() string` — MessageKey is the identity of the message an update carries. MAX sends the id of a created message inside message.body.mid and keeps the update's own message_id for other types, so the two are read in that order: a created message keyed on the update's field alone would key on an empty string and be dropped by the de-duplication that reads it.
+- `func (u Update) fallbackKey() string` — fallbackKey names a message the platform left without an id: MAX sends a voice message exactly like that. Such a message must still be answered, and answered once, so the name is built from what the update does carry - it repeats only when the same person sends the same amount of text in the same second.
 - `func (m Message) InboundFiles() ([]InboundFile, error)` — InboundFiles lists every attachment of the message the gateway can fetch. A malformed one is reported through ErrBadUpdate, so the caller logs the count and carries on with the attachments that parsed.
 - `func (m Message) ImageAttachments() ([]ImageAttachment, error)` — ImageAttachments lists image attachments of the message. A malformed attachment returns the images that parsed together with ErrBadUpdate, so the caller can log the count and carry on rather than drop the message.
 - `func (u User) DisplayName() string` — DisplayName names a person in a quote or a log, preferring the card's own name and falling back to the handle.
@@ -355,6 +360,14 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (b *Bot) pollInterval() time.Duration` — pollInterval is the pause the loop keeps between two polls: the configured interval, or the one a test set to poll faster than the one-second floor of the configuration.
 - `func pollLoop(ctx context.Context, c *Client, h Handler, interval time.Duration, log *slog.Logger) error` — pollLoop is PollLoop over an interval given outright, so a test can poll faster than the configuration allows.
 
+## external/gateway/max/reask.go
+
+### Functions
+
+- `func (b *Bot) reaskQuestion(ctx context.Context, in inbound, sessionID string)` — reaskQuestion asks this chat a question that is already waiting for an answer elsewhere. It reports nothing: the card is a courtesy of the switch, and a chat that cannot be asked must not fail a switch that otherwise worked.
+- `func reaskText(q session.WaitingQuestion) string` — reaskText is the question as the card shows it: the header and the words of the question, without the options - they are listed under it by listedQuestion.
+- `func (b *Bot) settleReask(c *Client, messageID, text, note string)` — settleReask ends the card: it says how the question ended and loses its keyboard, so no option of it can be pressed again.
+
 ## external/gateway/max/resume.go
 
 ### Types
@@ -371,6 +384,8 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (b *Bot) confirmResume(ctx context.Context, c *Client, u Update, in inbound, row acp.SessionListInfo)` — confirmResume writes the confirmation of a switch into the message the tap came from, so the menu and the choice do not linger as two messages. A press that carries no message to rewrite is answered with a message of its own.
 - `func (b *Bot) resumeSession(ctx context.Context, c *Client, in inbound, id string)` — resumeSession switches the chat of in to id, when only the id is known.
 - `func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionListInfo) (string, [][]Button)` — resumeSessionRow switches the chat of in to row and returns what the chat is now on, with a keyboard that takes the menu away. It posts nothing: the caller sends the text as a message of its own or writes it into the message the choice came from, so a tap on a menu leaves one message behind and not two. The session is loaded first: a bundle that cannot be read is reported here, and the mapping is left as it was, so the chat keeps the conversation it had.
+- `func (b *Bot) busyNoteFor(sessionID string) string` — busyNoteFor says what a busy session is busy with. A turn standing still on a question is not work: the person is the one being waited for, and telling them "work is going on" hides the only thing they can do about it.
+- `func (b *Bot) reaskAfterSwitch(ctx context.Context, in inbound, sessionID string)` — reaskAfterSwitch asks the chat the question the session is waiting for, once the switch has said its own words: a question that arrives before the card it belongs to reads as if the chat had been waiting all along (reask.go).
 - `func (b *Bot) resumeMenu(rows []acp.SessionListInfo, current string, page int, query string) resumeMenu` — resumeMenu lays out one page of the keyboard over rows: a button per session, the chat's current one marked, and a navigation row when there is more than one page. With a query the rows are the matches and there is no navigation - the query does not fit the callback payload, so a second page could not be asked for - and the text says how many matched instead; a narrower query is the way to the rest.
 - `func resumePageCallback(page int) string` — resumePageCallback is the payload of one navigation arrow.
 - `func (b *Bot) listSessions(ctx context.Context) ([]acp.SessionListInfo, error)` — listSessions asks the server for the sessions it keeps, newest first. No folder narrows the list: a chat has no working directory of its own, so it sees what a console connected to this server would see.

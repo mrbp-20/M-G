@@ -47,7 +47,7 @@ func TestQuietLinks_LeavesWhatIsNotAHost(t *testing.T) {
 		{"a decimal", "ждём 2.5 s"},
 		{"a sentence", "Готово. Дальше по плану."},
 		{"no dot at all", "Привет! Пришлите вопрос или задачу"},
-		{"a link somebody meant", "see https://github.com/mrbp-20/MX-Gate-Code now"},
+		{"a link somebody meant", "see https://github.com/coddy-project/coddy-agent now"},
 	}
 
 	for _, c := range cases {

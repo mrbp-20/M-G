@@ -65,7 +65,7 @@ func TestClient_Send_ARealLinkKeepsItsWords(t *testing.T) {
 	f := newSendServer(t)
 	c := f.client(t)
 
-	text := "ссылка: https://github.com/mrbp-20/MX-Gate-Code"
+	text := "ссылка: https://github.com/coddy-project/coddy-agent"
 	if _, err := c.Send(context.Background(), Outgoing{Target: Target{ChatID: 1}, Text: text, Format: "markdown"}); err != nil {
 		t.Fatalf("send: %v", err)
 	}

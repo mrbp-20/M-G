@@ -3,6 +3,7 @@
 package max
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -630,4 +631,170 @@ func TestASettingsCommandWithAnInvisibleRune_IsStillACommand(t *testing.T) {
 	if got := r.waitTurn(t); got != "/think" {
 		t.Fatalf("prompt = %q, want %q", got, "/think")
 	}
+}
+
+// unidentifiedMsg builds a created message the way MAX sends a voice message: a
+// body with no mid at all, so MessageKey has nothing to name it by.
+func unidentifiedMsg(text string, ts int64) Update {
+	body, _ := json.Marshal(map[string]any{
+		"sender":    map[string]any{"user_id": 1, "name": "Alice"},
+		"recipient": map[string]any{"chat_id": 10, "chat_type": "dialog"},
+		"timestamp": ts,
+		"body":      map[string]any{"text": text},
+	})
+	return Update{UpdateType: "message_created", Timestamp: ts, Message: body}
+}
+
+// TestHandle_AMessageWithoutAnIDIsStillAnswered is the defect of 01.11: a voice
+// message arrived with no id, the gateway called it unidentifiable and dropped it,
+// and the speech of the person was gone without an answer and without a word.
+func TestHandle_AMessageWithoutAnIDIsStillAnswered(t *testing.T) {
+	r := newStubRunner()
+	b := newTestBot(r)
+
+	if err := b.Handle(context.Background(), unidentifiedMsg("речь без идентификатора", 1762000000)); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got := r.waitTurn(t); got != "речь без идентификатора" {
+		t.Fatalf("prompt = %q, want the words of the message", got)
+	}
+}
+
+// TestHandle_TheSameUnidentifiedMessageRunsOneTurn: without an id from the
+// platform the gateway names the message by what it carries, so a redelivery of
+// the same message cannot answer twice.
+func TestHandle_TheSameUnidentifiedMessageRunsOneTurn(t *testing.T) {
+	r := newStubRunner()
+	b := newTestBot(r)
+	u := unidentifiedMsg("одна и та же речь", 1762000001)
+
+	if err := b.Handle(context.Background(), u); err != nil {
+		t.Fatalf("first Handle: %v", err)
+	}
+	r.waitTurn(t)
+	if err := b.Handle(context.Background(), u); err != nil {
+		t.Fatalf("second Handle: %v", err)
+	}
+	time.Sleep(50 * time.Millisecond)
+	if n := r.promptCount(); n != 1 {
+		t.Errorf("prompts = %d, want 1: the same message was answered twice", n)
+	}
+}
+
+// TestHandle_AnUnhandledUpdateTypeIsRecordedWithItsRaw: the voice message of
+// 01.11 arrived as a message_created with an empty body, and whatever the platform
+// sent after it stayed invisible - an unknown update type returned nil without a
+// word, so the sequence could not be read from the log at all.
+func TestHandle_AnUnhandledUpdateTypeIsRecordedWithItsRaw(t *testing.T) {
+	r := newStubRunner()
+	b := newTestBot(r)
+	var logs bytes.Buffer
+	b.log = slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
+	raw := json.RawMessage(`{"body":{"mid":"m9","text":"речь"}}`)
+	if err := b.Handle(context.Background(), Update{UpdateType: "message_edited", Message: raw}); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	got := logs.String()
+	if !strings.Contains(got, "update not handled") || !strings.Contains(got, "message_edited") {
+		t.Fatalf("log = %q, want the type of the update named as not handled", got)
+	}
+	if !strings.Contains(got, "m9") {
+		t.Fatalf("log = %q, want the raw update in the same line", got)
+	}
+	if n := r.promptCount(); n != 0 {
+		t.Errorf("prompts = %d, want none: an unhandled type runs no turn", n)
+	}
+}
+
+// TestRawUpdate_IsTheWireNotOurOwnShape: the log line must carry the bytes the
+// platform sent, not a re-marshal of this adapter's own struct - a field under a
+// name we do not read would otherwise be invisible exactly when it matters.
+func TestRawUpdate_IsTheWireNotOurOwnShape(t *testing.T) {
+	wire := `{"update_type":"message_created","timestamp":1,"message":null,` +
+		`"some_future_field":{"voice":{"token":"tok-1"}}}`
+	var u Update
+	if err := json.Unmarshal([]byte(wire), &u); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	got := rawUpdate(u)
+	if !strings.Contains(got, "some_future_field") || !strings.Contains(got, "tok-1") {
+		t.Fatalf("rawUpdate = %q, want the update as it came off the wire", got)
+	}
+}
+
+// busyOverrides shortens the wait for the duration of one test.
+func busyOverrides(t *testing.T, wait, pause, quiet time.Duration) {
+	t.Helper()
+	oldWait, oldPause, oldQuiet, oldMax := turnBusyWait, turnBusyPause, busyQuiet, turnBusyPauseMax
+	turnBusyWait, turnBusyPause, busyQuiet = wait, pause, quiet
+	turnBusyPauseMax = 4 * pause
+	t.Cleanup(func() {
+		turnBusyWait, turnBusyPause, busyQuiet, turnBusyPauseMax = oldWait, oldPause, oldQuiet, oldMax
+	})
+}
+
+// TestBusyChat_KeepsTheMessageAndPromisesToRunIt is the defect of 29.10 and
+// 02.11: a message that arrived while somebody else's turn held the session was
+// thrown away after thirty seconds. It is kept now, and the chat is told so.
+func TestBusyChat_KeepsTheMessageAndPromisesToRunIt(t *testing.T) {
+	busyOverrides(t, 5*time.Second, 5*time.Millisecond, 10*time.Millisecond)
+	f := newSendServer(t)
+	r := newStubRunner()
+	r.busy = 20
+	b := newTestBot(r)
+	b.setClient(f.client(t))
+
+	if err := b.Handle(context.Background(), inboundMsg("m1", "hello")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	if got := r.waitTurn(t); got != "hello" {
+		t.Fatalf("prompt = %q, want the kept message to reach its turn", got)
+	}
+	promises := 0
+	for _, call := range f.sends() {
+		if strings.Contains(call.body.Text, "⏳ Принял") {
+			promises++
+		}
+		if call.body.Text == busyNote {
+			t.Fatalf("the chat was told the message was lost: %q", call.body.Text)
+		}
+	}
+	if promises != 1 {
+		t.Fatalf("promises = %d, want one promise to run the message", promises)
+	}
+}
+
+// TestBusyChat_PromisesWithTheQuestionWhenOneWaits: a session standing on a
+// question is not working, and the promise must say what the person owes it.
+func TestBusyChat_PromisesWithTheQuestionWhenOneWaits(t *testing.T) {
+	busyOverrides(t, 5*time.Second, 5*time.Millisecond, 10*time.Millisecond)
+	f := newSendServer(t)
+	r := newStubRunner()
+	r.busy = 20
+	b := newTestBot(r)
+	b.setClient(f.client(t))
+	session.SetWaitingQuestionSource(
+		func(string) (session.WaitingQuestion, bool) {
+			return session.WaitingQuestion{SessionID: "s", RequestID: "q", Text: "Заменить?", Options: []string{"Да"}}, true
+		},
+		func(string, int, string) bool { return true },
+	)
+	t.Cleanup(func() { session.SetWaitingQuestionSource(nil, nil) })
+
+	if err := b.Handle(context.Background(), inboundMsg("m1", "hello")); err != nil {
+		t.Fatalf("Handle: %v", err)
+	}
+	r.waitTurn(t)
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		for _, call := range f.sends() {
+			if strings.Contains(call.body.Text, "ждёт вашего ответа") {
+				return
+			}
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	t.Fatalf("no promise named the waiting question; sent: %+v", f.sends())
 }

@@ -531,6 +531,7 @@ func (s *Sender) RequestQuestion(ctx context.Context, params acp.QuestionRequest
 		return nil, fmt.Errorf("sessionId and requestId are required")
 	}
 	ch := registerQuestionWait(sid, rid)
+	rememberQuestion(params)
 	s.notifyQuestionPending(sid, true)
 	defer func() {
 		unregisterQuestionWait(sid, rid)

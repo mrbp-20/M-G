@@ -505,3 +505,37 @@ func TestResumeSaysWhenTheSessionIsBusy(t *testing.T) {
 		t.Errorf("the chat is on %q after a busy refusal, want sess_b7", got)
 	}
 }
+
+// TestResumeSaysTheTurnWaitsForAnAnswer: a session standing still on a question is
+// not working, and the confirmation must say so - "work is going on" hides the one
+// thing the person has to do, and the question card follows below it.
+func TestResumeSaysTheTurnWaitsForAnAnswer(t *testing.T) {
+	r := newResumeRunner([]acp.SessionListInfo{titled("sess_b9", "Берег")})
+	r.busy["sess_b9"] = true
+	b, f := newResumeBot(t, r)
+	session.SetWaitingQuestionSource(
+		func(sessionID string) (session.WaitingQuestion, bool) {
+			if sessionID != "sess_b9" {
+				return session.WaitingQuestion{}, false
+			}
+
+			return session.WaitingQuestion{
+				SessionID: "sess_b9",
+				RequestID: "q1",
+				Text:      "Заменить файл?",
+				Options:   []string{"Да", "Нет"},
+			}, true
+		},
+		func(string, int, string) bool { return true },
+	)
+	t.Cleanup(func() { session.SetWaitingQuestionSource(nil, nil) })
+
+	b.handleResume(context.Background(), testInbound("/resume sess_b9"), resumeKey(), "sess_b9")
+	text := sentTexts(f)[0]
+	if !strings.Contains(text, "ждёт ответа вопрос") {
+		t.Errorf("confirmation = %q, want the waiting question named", text)
+	}
+	if strings.Contains(text, "идёт работа") {
+		t.Errorf("confirmation = %q, must not call a waiting turn work", text)
+	}
+}

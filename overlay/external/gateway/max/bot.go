@@ -68,6 +68,12 @@ type Bot struct {
 	// after the turn ended still finds what the command was and what it said.
 	// Its zero value is ready to use.
 	details detailStore
+	// reasks remembers the questions already asked in a chat after a switch, so a
+	// second /resume cannot ask the same one twice (reask.go).
+	reasks *seenIDs
+	// reaskEvery, when set, replaces how often a re-asked card checks that its
+	// question still waits; tests watch the card without waiting seconds.
+	reaskEvery time.Duration
 	// transcript reads a session's messages for the history card a switch posts
 	// (history.go). Nil leaves a switch as it was: the confirmation alone.
 	transcript transcriptReader
@@ -178,6 +184,7 @@ func New(cfg *config.MaxGatewayConfig, runner SessionRunner, cwd string, log *sl
 		cursorPath: cursorPath,
 		workers:    make(map[string]chan workerJob),
 		seen:       newSeenIDs(4096),
+		reasks:     newSeenIDs(64),
 	}
 }
 

@@ -8,6 +8,7 @@ package max
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"sync"
@@ -60,6 +61,14 @@ type inbound struct {
 // answers itself: its own messages arrive back as updates, and are told apart
 // by the is_bot flag of their sender.
 func (b *Bot) Handle(ctx context.Context, u Update) error {
+	if u.UpdateType == "" {
+		// An update without a type cannot be answered, but staying silent about it
+		// is what turned the voice message into a mystery: the raw body says what
+		// actually arrived.
+		b.log.Debug("max: update without a type", "raw", rawUpdate(u))
+
+		return nil
+	}
 	switch u.UpdateType {
 	case "message_callback":
 		c := b.connectedClient()
@@ -75,14 +84,28 @@ func (b *Bot) Handle(ctx context.Context, u Update) error {
 		// message_id that MAX leaves for other update types.
 		key := u.MessageKey()
 		if key == "" {
-			b.log.Debug("max: update ignored", "reason", "no message id")
-			return nil
+			// MAX sent a created message with no id at all, and a voice message
+			// arrives exactly like that: the person's speech was thrown away,
+			// without an answer and without a word about why. The message is
+			// handled anyway, named by what it does carry, and the raw update
+			// goes to the log so its real shape stops being a guess.
+			key = u.fallbackKey()
+			b.log.Warn("max: message without an id", "key", key, "raw", rawUpdate(u))
+			if key == "" {
+				return nil
+			}
 		}
 		if !b.seen.add(key) {
 			return nil
 		}
 		return b.handleMessage(ctx, u)
 	default:
+		// A type this adapter does not answer. It is named here, with its raw
+		// body, because the platform is free to send a message in more than one
+		// update: a voice message came first as a message_created with an empty
+		// body, and whatever should have followed it was hidden by a silent nil.
+		b.log.Debug("max: update not handled", "update_type", u.UpdateType, "raw", rawUpdate(u))
+
 		return nil
 	}
 }
@@ -503,13 +526,17 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 		SurfaceSystemPrompt: surfaceSystemPrompt(),
 		Restriction:         restriction,
 	}
-	result, err := b.runTurn(tctx, params, mirrored, opts)
+	result, err := b.runTurn(tctx, params, mirrored, opts, func() {
+		b.log.Info("max: message kept while the session is busy",
+			"session", st.GetID(), "user", in.userID, "chat", in.chatID)
+		b.reply(ctx, in, b.waitNote(st.GetID()))
+	})
 	sender.Flush()
 
 	if err != nil {
-		// A session whose previous turn is still running is not an error the
-		// person caused: saying so in English internals is not an answer, so it
-		// is told to send the message again once the turn is over.
+		// The wait ran out, which now takes half an hour: the message was never
+		// run, and saying so plainly is the least a person deserves - the
+		// internals of the error are not an answer.
 		if errors.Is(err, session.ErrSessionTurnBusy) {
 			b.log.Warn("max: the previous turn still holds the session", "session", st.GetID(), "user", in.userID)
 			b.reply(ctx, in, busyNote)
@@ -539,35 +566,78 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 
 // The turns of one session are serialized, so a message that arrives while the
 // previous turn is still running waits for its place in the queue instead of
-// failing at once. Only a wait that runs out is reported to the person, and in
-// Russian: the internal error is not an answer.
+// failing at once. The wait lasts as long as the other turn does - a turn of the
+// browser can run for half an hour, and a wait measured in seconds dropped the
+// message of a person who had every right to be heard (29.10, 02.11).
 var (
-	// turnBusyWait bounds how long a message waits for the previous turn.
-	turnBusyWait = 30 * time.Second
-	// turnBusyPause is the gap between two attempts.
+	// turnBusyWait bounds how long a message waits for the previous turn. It is
+	// the backstop of a stuck session, not the length of a normal turn.
+	turnBusyWait = 30 * time.Minute
+	// turnBusyPause is the first gap between two attempts; it doubles up to
+	// turnBusyPauseMax, so half an hour of waiting does not cost a line a second.
 	turnBusyPause = time.Second
+	// turnBusyPauseMax caps the gap between attempts.
+	turnBusyPauseMax = 5 * time.Second
+	// busyQuiet is how long a wait stays silent before the chat is told the
+	// message was taken: half a second of waiting needs no promise.
+	busyQuiet = 2 * time.Second
 )
 
-// busyNote is what a person is told when their message could not be taken.
-const busyNote = "В беседе идёт работа — пришлите сообщение ещё раз, когда я закончу."
+// busyNote is what a person is told when the wait ran out and the message was
+// never run: it says plainly that nothing happened, so nobody waits for an
+// answer that will not come.
+const busyNote = "Не дождался: беседа так и занята, сообщение не выполнено. Пришлите его ещё раз позже."
+
+// waitNote is the promise a chat gets while its message waits for somebody else's
+// turn: the message is kept, and it runs by itself once the session is free. A
+// session standing on a question is not working, and saying "work is going on"
+// there would hide the only thing the person has to do.
+func (b *Bot) waitNote(sessionID string) string {
+	if _, waiting := session.WaitingQuestionOf(sessionID); waiting {
+		return "⏳ Принял. Беседа ждёт вашего ответа на вопрос — как ответите, сразу продолжу."
+	}
+
+	return "⏳ Принял. В беседе идёт работа — выполню, как только она закончится. Присылать заново не нужно."
+}
 
 // runTurn runs one turn, waiting out a session whose previous turn has not
 // finished yet.
-func (b *Bot) runTurn(ctx context.Context, params acp.SessionPromptParams, sender acp.UpdateSender, opts *session.PromptRunOpts) (*acp.SessionPromptResult, error) {
-	deadline := time.Now().Add(turnBusyWait)
+func (b *Bot) runTurn(ctx context.Context, params acp.SessionPromptParams, sender acp.UpdateSender, opts *session.PromptRunOpts, onBusy func()) (*acp.SessionPromptResult, error) {
+	start := time.Now()
+	deadline := start.Add(turnBusyWait)
+	pause := turnBusyPause
+	told := false
+	lastLog := start
 	for {
 		result, err := b.runner.HandleSessionPromptWithSender(ctx, params, sender, opts)
 		if err == nil || !errors.Is(err, session.ErrSessionTurnBusy) {
 			return result, err
 		}
-		if !time.Now().Before(deadline) {
+		now := time.Now()
+		if !told && now.Sub(start) >= busyQuiet {
+			// The message is kept, not lost, so the person is told it was taken.
+			// The promise comes after a short silence: a second of waiting needs
+			// no words, and a promise per message would flood the chat.
+			told = true
+			if onBusy != nil {
+				onBusy()
+			}
+		}
+		if !now.Before(deadline) {
 			return result, err
 		}
-		b.log.Debug("max: turn waits for the previous one", "session", params.SessionID)
+		if now.Sub(lastLog) >= turnBusyPauseMax {
+			lastLog = now
+			b.log.Debug("max: turn waits for the previous one",
+				"session", params.SessionID, "waited", now.Sub(start).Round(time.Second).String())
+		}
 		select {
 		case <-ctx.Done():
 			return result, ctx.Err()
-		case <-time.After(turnBusyPause):
+		case <-time.After(pause):
+		}
+		if pause < turnBusyPauseMax {
+			pause *= 2
 		}
 	}
 }
@@ -630,6 +700,25 @@ func (b *Bot) applyInitialModel(ctx context.Context, st *session.State) {
 
 // seenIDs remembers recently handled message ids, so a message MAX delivered
 // twice runs one turn.
+// logRawRunes is how much of an unidentified update reaches the log: enough to
+// see the shape of it, short enough to stay one readable line.
+const logRawRunes = 600
+
+// rawUpdate is the update as it came off the wire, cut to a readable length. The
+// bytes kept at parse time are preferred: marshalling our own struct back would
+// hide a field the struct does not name.
+func rawUpdate(u Update) string {
+	if len(u.wire) > 0 {
+		return shortenRunes(string(u.wire), logRawRunes)
+	}
+	raw, err := json.Marshal(u)
+	if err != nil {
+		return "не разобрать"
+	}
+
+	return shortenRunes(string(raw), logRawRunes)
+}
+
 type seenIDs struct {
 	mu    sync.Mutex
 	limit int
