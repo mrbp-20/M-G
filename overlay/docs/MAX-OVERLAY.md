@@ -32,7 +32,10 @@ so they are counted in the first state and not in the second.
 
 ## Files we share with upstream
 
-48 files: every MAX change that had to land inside a file upstream also owns, does. Each of them conflicts the day Pavel touches it: the rebase onto 1.3.62 found twenty-two of them carrying his changes too, and the rows added since — the chat-mirror seam below and `AGENTS.md` — are the newest part of the surface.
+50 files: every MAX change that had to land inside a file upstream also owns, does. Overlap is not conflict:
+the rebase onto 1.3.80 found the upstream side had changed 653 files between 1.3.62 and 1.3.80, 14 of them
+ours too, and the whole layer still rebased without a single conflict. The lesson stands: what matters is not
+how many files both sides touched, but whether the same lines meet.
 
 ### The document seam: two files
 
