@@ -30,31 +30,13 @@ type BotCommand struct {
 	Description string `json:"description"`
 }
 
-// botCommands is the menu published at Start: the short list a person meets
-// first, the same shape the Telegram side publishes. It holds the commands
-// processMessage answers itself (start, help, model, context, clear) and the
-// three modes (agent, plan, ask), with goal closing it.
-//
-// The rest of the settings catalogue (reasoning, think, nothink, toolset, plus
-// the aliases effort and no_think) works and is handed to the session, but it
-// stays out of the hints: it is what somebody reaches for after the short list,
-// not what a first "/" should offer. Adding one is a one-line change here, and
-// commands_menu_test.go holds the platform bounds when that happens.
-//
-// Names carry no slash, since the client adds it.
 func botCommands() []BotCommand {
 	return []BotCommand{
 		{Name: "start", Description: "Приветствие и краткое знакомство"},
 		{Name: "help", Description: "Список команд и легенда"},
-		{Name: "model", Description: "Сменить модель"},
 		{Name: "stop", Description: "Остановить текущую работу"},
-		{Name: "agent", Description: "Режим работы: все инструменты"},
-		{Name: "plan", Description: "Режим плана: только чтение и план"},
-		{Name: "ask", Description: "Режим вопросов: ответы без правок"},
 		{Name: "context", Description: "Сколько занято в контексте"},
 		{Name: "goal", Description: "Работать над целью до готовности"},
-		{Name: "resume", Description: "Продолжить другую беседу"},
-		{Name: "clear", Description: "Начать новую беседу"},
 	}
 }
 

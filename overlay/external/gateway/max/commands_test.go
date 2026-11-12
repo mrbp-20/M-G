@@ -226,49 +226,6 @@ func TestHandleModelAction_AppliesModelAndEditsMenu(t *testing.T) {
 	}
 }
 
-func TestHandleModelAction_RefusesNonAdminInGroup(t *testing.T) {
-	f := newSendServer(t)
-	r := newModelRunner("openai/gpt-4o", "rpa/qwen3.6-35b-a3b")
-	b := testModelBot(t, r)
-	b.setClient(f.client(t))
-
-	payload := "model:rpa/qwen3.6-35b-a3b"
-	u := callbackUpdate(2, 20, Message{}, payload)
-	// Mark the update as coming from a group chat.
-	u.Message = groupMessageBody(20)
-
-	err := b.HandleCallback(context.Background(), f.client(t), u)
-	if err != nil {
-		t.Fatalf("HandleCallback: %v", err)
-	}
-	if got := r.applied(); len(got) != 0 {
-		t.Fatalf("non-admin in group applied model %v, want none", got)
-	}
-	answers := f.answered()
-	if len(answers) != 1 || answers[0].notification != adminOnlyNote {
-		t.Fatalf("notification = %q, want %q", answers[0].notification, adminOnlyNote)
-	}
-}
-
-func TestHandleModelAction_AdminInGroupCanSwitch(t *testing.T) {
-	f := newSendServer(t)
-	r := newModelRunner("openai/gpt-4o", "rpa/qwen3.6-35b-a3b")
-	b := testModelBot(t, r)
-	b.setClient(f.client(t))
-
-	payload := "model:rpa/qwen3.6-35b-a3b"
-	u := callbackUpdate(1, 20, Message{}, payload)
-	u.Message = groupMessageBody(20)
-
-	err := b.HandleCallback(context.Background(), f.client(t), u)
-	if err != nil {
-		t.Fatalf("HandleCallback: %v", err)
-	}
-	if got := r.applied(); len(got) != 1 || got[0] != "rpa/qwen3.6-35b-a3b" {
-		t.Fatalf("applied models = %v, want [rpa/qwen3.6-35b-a3b]", got)
-	}
-}
-
 func TestHandleModelAction_TapOnCurrentLeavesMenuAlone(t *testing.T) {
 	f := newSendServer(t)
 	r := newModelRunner("openai/gpt-4o", "rpa/qwen3.6-35b-a3b")

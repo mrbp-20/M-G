@@ -53,6 +53,17 @@ type Bot struct {
 	store  *sessionstore.Store
 	mirror session.TurnMirror
 
+	// sent remembers what this bot just posted, so the same line cannot arrive
+	// in a chat twice when two paths of one turn reach the same place.
+	sent *dupGuard
+
+	// groups is the group policy of this build: a build with gateway.max.groups
+	// admits a group only when the configuration names it with a path and an
+	// access level, a build without the tag refuses every group and refuses to
+	// start when the configuration expects one. One field, two bodies, no
+	// question anywhere else about which build this is.
+	groups *groupGate
+
 	// cursorPath is the file the poll marker is kept in, so a restart resumes
 	// where the bot stopped. It is a path in Coddy's state directory and never
 	// the working directory or a temporary one: serve_max.go builds it from
@@ -181,11 +192,65 @@ func New(cfg *config.MaxGatewayConfig, runner SessionRunner, cwd string, log *sl
 		log:        log,
 		store:      sessionstore.NewPersisted(storePath),
 		mirror:     mirror,
+		sent:       newDupGuard(),
 		cursorPath: cursorPath,
+		groups:     newGroupGate(cfg, log),
 		workers:    make(map[string]chan workerJob),
 		seen:       newSeenIDs(4096),
 		reasks:     newSeenIDs(64),
 	}
+}
+
+// notifyAdmins sends one message to every admin of the bot, each in their own
+// chat. One admin's failure does not stop the others, and a failure is said in
+// the log rather than swallowed.
+func (b *Bot) notifyAdmins(ctx context.Context, text string) {
+	if strings.TrimSpace(text) == "" {
+		return
+	}
+	c := b.connectedClient()
+	if c == nil {
+		b.log.Warn("max: admins not told", "reason", "no connected client")
+
+		return
+	}
+	sent := 0
+	for _, id := range b.cfg.Admins {
+		if id == 0 {
+			continue
+		}
+		sctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), actionTimeout)
+		_, err := c.Send(sctx, Outgoing{Target: Target{UserID: id}, Text: text})
+		cancel()
+		if err != nil {
+			b.log.Warn("max: admins not told", "admin", id, "error", err)
+			continue
+		}
+		sent++
+	}
+	b.log.Info("max: admins told", "admins", sent)
+}
+
+// groupProblemRunes keeps the startup letter inside one MAX message.
+const groupProblemRunes = 1200
+
+// reportGroupProblems says once, at startup, which group entries cannot be used
+// and why. Those groups stay unanswered; everything else works.
+func (b *Bot) reportGroupProblems(ctx context.Context) {
+	problems := b.groups.ConfigProblems()
+	if len(problems) == 0 {
+		return
+	}
+	for _, p := range problems {
+		b.log.Error("max: group entry cannot be used", "reason", p)
+	}
+	var sb strings.Builder
+	sb.WriteString("Группы в конфиге не работают, исправьте - включатся сами.\n")
+	for _, p := range problems {
+		fmt.Fprintf(&sb, "- %s\n", p)
+	}
+	sb.WriteString("Всё остальное работает: личные переписки и правильно заполненные группы.")
+	b.notifyAdmins(ctx, clipRunes(sb.String(), groupProblemRunes))
 }
 
 // Name satisfies gateway.Adapter.
@@ -210,6 +275,7 @@ func (b *Bot) Start(ctx context.Context) error {
 	if token == "" {
 		return fmt.Errorf("max: no bot token; set gateways.max.token or the %s environment variable", config.MaxBotTokenEnvVar)
 	}
+	b.log.Info("max: groups", "enabled", b.groups.Enabled())
 	hc, err := proxyutil.BuildHTTPClient(b.cfg.Proxy)
 	if err != nil {
 		return fmt.Errorf("max: %w", err)
@@ -252,6 +318,12 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.mu.Unlock()
 	b.setClient(client)
 	defer b.setClient(nil)
+	// Group entries that cannot be used are named once, after the client exists:
+	// the log carries them for whoever reads it, the admins get a letter for
+	// whoever wrote the file. The gateway keeps running - one bad group must not
+	// take the personal chats down, and returning an error here would have Coddy
+	// restart this adapter every five seconds (external/gateway/hub.go).
+	b.reportGroupProblems(ctx)
 
 	// The client shows these when somebody types "/". Best effort: a bot that
 	// cannot publish its hints still answers people, and the next Start tries

@@ -39,12 +39,20 @@
           },
           "mode": {
             "type": "string",
-            "enum": ["", "subscription", "platform"],
+            "enum": [
+              "",
+              "subscription",
+              "platform"
+            ],
             "description": "Kimi credential mode. Omitted means subscription."
           },
           "region": {
             "type": "string",
-            "enum": ["", "global", "china"],
+            "enum": [
+              "",
+              "global",
+              "china"
+            ],
             "description": "Kimi region. Omitted means global."
           },
           "kimi_identity": {
@@ -58,7 +66,12 @@
           },
           "user_agent": {
             "type": "string",
-            "enum": ["", "openai", "anthropic", "coddy"],
+            "enum": [
+              "",
+              "openai",
+              "anthropic",
+              "coddy"
+            ],
             "default": "",
             "description": "Client identity for types openai and anthropic. Empty (the default), openai or anthropic keeps the current provider SDK identity (OpenAI/Go or Anthropic/Go); coddy sends Coddy/<running version>. Applies to completions and model listing. Ignored for other provider types."
           },
@@ -192,15 +205,48 @@
             "pattern": "^[^/]+/.+$"
           },
           "kimi_metadata": {
-            "type": ["object", "null"],
+            "type": [
+              "object",
+              "null"
+            ],
             "description": "Kimi catalog protocol bound to this model reference, provider mode and region.",
             "additionalProperties": false,
-            "required": ["model", "protocol", "mode", "region"],
+            "required": [
+              "model",
+              "protocol",
+              "mode",
+              "region"
+            ],
             "properties": {
-              "model": {"type": "string", "description": "Full provider/model reference listed in the catalog."},
-              "protocol": {"type": "string", "enum": ["kimi", "anthropic", "openai_responses"], "description": "Protocol reported for this model."},
-              "mode": {"type": "string", "enum": ["subscription", "platform"], "description": "Provider mode used to list the model."},
-              "region": {"type": "string", "enum": ["global", "china"], "description": "Provider region used to list the model."}
+              "model": {
+                "type": "string",
+                "description": "Full provider/model reference listed in the catalog."
+              },
+              "protocol": {
+                "type": "string",
+                "enum": [
+                  "kimi",
+                  "anthropic",
+                  "openai_responses"
+                ],
+                "description": "Protocol reported for this model."
+              },
+              "mode": {
+                "type": "string",
+                "enum": [
+                  "subscription",
+                  "platform"
+                ],
+                "description": "Provider mode used to list the model."
+              },
+              "region": {
+                "type": "string",
+                "enum": [
+                  "global",
+                  "china"
+                ],
+                "description": "Provider region used to list the model."
+              }
             }
           },
           "max_tokens": {
@@ -261,7 +307,9 @@
       "items": {
         "type": "object",
         "additionalProperties": false,
-        "required": ["name"],
+        "required": [
+          "name"
+        ],
         "properties": {
           "name": {
             "type": "string",
@@ -293,7 +341,10 @@
         "queue_mode": {
           "type": "string",
           "description": "Preferred queue mode for Enter during a running turn: steer joins the next ReAct step, after_turn starts a new turn after the current answer. When absent, interactive surfaces ask on first use.",
-          "enum": ["steer", "after_turn"]
+          "enum": [
+            "steer",
+            "after_turn"
+          ]
         },
         "model": {
           "type": "string",
@@ -401,15 +452,78 @@
       "description": "Checks a session goal (/goal) after every turn with a second model, continues unfinished work within bounds, and watches for stalled or looping turns; see https://coddy.dev/docs/features/session-supervisor.",
       "additionalProperties": false,
       "properties": {
-        "enable": {"type": "boolean", "description": "Check ordinary turns against the latest request even without a /goal. A session goal is checked whatever this switch says.", "default": false},
-        "model": {"type": "string", "description": "Configured models[].model that checks the work. Empty uses the session's own model, which then grades its own work; a model of another family is the better judge.", "default": ""},
-        "verify": {"type": ["boolean", "null"], "description": "Confirm a met verdict before the goal is closed: the goal-verifier subagent reads the workspace with read-only tools and checks every requirement. Unset means true.", "default": true},
-        "stall_seconds": {"type": ["integer", "null"], "description": "Seconds a goal turn may go without any update before the watchdog cuts it and starts a recovery turn. Permission prompts, running tools and running background tasks pause the timer. 0 disables it.", "default": 300, "minimum": 0},
-        "max_nudges": {"type": ["integer", "null"], "description": "Recovery turns after a stall, a tool loop or a failed turn, per run of the supervisor.", "default": 2, "minimum": 0},
-        "max_continuations": {"type": ["integer", "null"], "description": "Automatic continuation turns one goal may use; when they run out the goal gets one wrap-up turn and stops as limited.", "default": 10, "minimum": 0},
-        "loop_repeat": {"type": ["integer", "null"], "description": "How many times a repeating cycle of identical tool operations (same call, same result) may come round before the watchdog cuts the turn. 0 disables loop detection.", "default": 3, "minimum": 0},
-        "token_budget": {"type": ["integer", "null"], "description": "Uncached input plus output tokens one goal's turns may spend; 0 means no cap.", "default": 0, "minimum": 0},
-        "max_chain_sessions": {"type": ["integer", "null"], "description": "Sessions one goal chain (/goal --then-file) may open one after another; when the goal of the last one is met, the chain stops. 0 turns goal chains off.", "default": 10, "minimum": 0}
+        "enable": {
+          "type": "boolean",
+          "description": "Check ordinary turns against the latest request even without a /goal. A session goal is checked whatever this switch says.",
+          "default": false
+        },
+        "model": {
+          "type": "string",
+          "description": "Configured models[].model that checks the work. Empty uses the session's own model, which then grades its own work; a model of another family is the better judge.",
+          "default": ""
+        },
+        "verify": {
+          "type": [
+            "boolean",
+            "null"
+          ],
+          "description": "Confirm a met verdict before the goal is closed: the goal-verifier subagent reads the workspace with read-only tools and checks every requirement. Unset means true.",
+          "default": true
+        },
+        "stall_seconds": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Seconds a goal turn may go without any update before the watchdog cuts it and starts a recovery turn. Permission prompts, running tools and running background tasks pause the timer. 0 disables it.",
+          "default": 300,
+          "minimum": 0
+        },
+        "max_nudges": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Recovery turns after a stall, a tool loop or a failed turn, per run of the supervisor.",
+          "default": 2,
+          "minimum": 0
+        },
+        "max_continuations": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Automatic continuation turns one goal may use; when they run out the goal gets one wrap-up turn and stops as limited.",
+          "default": 10,
+          "minimum": 0
+        },
+        "loop_repeat": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "How many times a repeating cycle of identical tool operations (same call, same result) may come round before the watchdog cuts the turn. 0 disables loop detection.",
+          "default": 3,
+          "minimum": 0
+        },
+        "token_budget": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Uncached input plus output tokens one goal's turns may spend; 0 means no cap.",
+          "default": 0,
+          "minimum": 0
+        },
+        "max_chain_sessions": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "description": "Sessions one goal chain (/goal --then-file) may open one after another; when the goal of the last one is met, the chain stops. 0 turns goal chains off.",
+          "default": 10,
+          "minimum": 0
+        }
       }
     },
     "prompts": {
@@ -1342,8 +1456,17 @@
               "description": "Opaque generation identifier and SHA-256 hashes of the recovery codes for the web account. Plaintext codes are shown only when issued, and GET /coddy/config never returns their hashes.",
               "additionalProperties": false,
               "properties": {
-                "generation": {"type": "string", "description": "Identifier of the current recovery-code set."},
-                "hashes": {"type": "array", "description": "SHA-256 hashes of unused recovery codes. Consumption removes a hash and records it in a separate ledger, preventing reuse after an old configuration is restored.", "items": {"type": "string"}}
+                "generation": {
+                  "type": "string",
+                  "description": "Identifier of the current recovery-code set."
+                },
+                "hashes": {
+                  "type": "array",
+                  "description": "SHA-256 hashes of unused recovery codes. Consumption removes a hash and records it in a separate ledger, preventing reuse after an old configuration is restored.",
+                  "items": {
+                    "type": "string"
+                  }
+                }
               }
             },
             "session_ttl_hours": {
@@ -1872,6 +1995,10 @@
                   "access": {
                     "type": "string",
                     "description": "Per-chat access override: \"all\", \"admins\", or \"group:<name>\"."
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "description": "Not used here: the workspace is a MAX gateway key (gateways.max.chats[].workspace), where it names the directory a group chat is confined to."
                   }
                 }
               }
@@ -2009,6 +2136,10 @@
                   "access": {
                     "type": "string",
                     "description": "Per-chat access override: \"all\", \"admins\", or \"group:<name>\"."
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "description": "Directory reserved for a group chat: an absolute path, required for a group, and a group without it is not answered at all. Needs a build with the gateway.max.groups tag; a build without it refuses to start when a group is configured."
                   }
                 }
               }
@@ -2114,6 +2245,10 @@
                   "access": {
                     "type": "string",
                     "description": "Per-chat access override: \"all\", \"admins\", or \"group:<name>\"."
+                  },
+                  "workspace": {
+                    "type": "string",
+                    "description": "Not used here: the workspace is a MAX gateway key (gateways.max.chats[].workspace), where it names the directory a group chat is confined to."
                   }
                 }
               }

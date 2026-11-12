@@ -279,6 +279,14 @@ func callArguments(items []acp.ToolCallResultItem) (string, bool) {
 // postDetails puts one call into the chat with the button that opens it.
 func (s *Sender) postDetails(token, title string) string {
 	text, buttons := detailsView(token, toolDetail{Title: title}, pageCollapsed)
+	if s.b.sent.repeat(s.target, text) {
+		// The call already reached the chat by the other road of this turn; a
+		// second card with the same button is noise, and the model did not run
+		// the call twice.
+		s.b.log.Debug("max: duplicate tool call dropped", "target", s.target, "runes", len([]rune(text)))
+
+		return ""
+	}
 	mid, err := s.c.Send(s.ctx, Outgoing{Target: s.target, Text: text, Buttons: buttons})
 	if err != nil {
 		// The call happened and its details are lost with the message: at debug

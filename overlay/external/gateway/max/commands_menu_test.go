@@ -263,7 +263,10 @@ func TestBotCommandsMatchGateway(t *testing.T) {
 	// /stop joined the list on 25.10 by the operator's decision: stopping a turn
 	// is the one thing a person reaches for while the bot is busy and cannot
 	// wait for it, so it belongs to the short list rather than to the catalogue.
-	core := []string{"start", "help", "model", "stop", "agent", "plan", "ask", "context", "goal", "resume", "clear"}
+	// 12.11: настройки и режимы убраны из подсказок по решению оператора - в группе
+	// MAX показывает тот же список, что и в личке, а менять беседу одному за всех
+	// нельзя. Команды работают, helpText их называет; здесь они больше не стоят.
+	core := []string{"start", "help", "stop", "context", "goal"}
 	for _, name := range core {
 		if !listed[name] {
 			t.Errorf("botCommands is missing %q, which the bot accepts and a person meets first", name)

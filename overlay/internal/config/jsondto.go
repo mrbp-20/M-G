@@ -110,6 +110,10 @@ type TelegramChatJSON struct {
 	ChatID    int64  `json:"chat_id"`
 	Isolation string `json:"isolation,omitempty"`
 	Access    string `json:"access,omitempty"`
+	// Workspace is the MAX gateway's group directory. It travels through this
+	// shared shape because all three gateways use one chat struct, and a field
+	// left out here would be dropped by a save from the settings form.
+	Workspace string `json:"workspace,omitempty"`
 }
 
 // InstructionsJSON mirrors Instructions for JSON APIs.
@@ -816,6 +820,7 @@ func ConfigToJSONDTO(c *Config) *ConfigJSON {
 	for _, ch := range tg.Chats {
 		tgJSON.Chats = append(tgJSON.Chats, TelegramChatJSON{
 			ChatID: ch.ChatID, Isolation: string(ch.Isolation), Access: string(ch.Access),
+			Workspace: ch.Workspace,
 		})
 	}
 	pc := c.Gateways.Pachca
@@ -1083,6 +1088,7 @@ func JSONDTOToConfig(j *ConfigJSON, paths Paths) *Config {
 	for _, ch := range jt.Chats {
 		tg.Chats = append(tg.Chats, TelegramChatConfig{
 			ChatID: ch.ChatID, Isolation: IsolationMode(ch.Isolation), Access: AccessLevel(ch.Access),
+			Workspace: ch.Workspace,
 		})
 	}
 	jp := j.Gateways.Pachca
@@ -1119,7 +1125,7 @@ func userGroupsToJSON(groups []GatewayUserGroup) []TelegramUserGroupJSON {
 func chatsToJSON(chats []GatewayChatConfig) []TelegramChatJSON {
 	var out []TelegramChatJSON
 	for _, ch := range chats {
-		out = append(out, TelegramChatJSON{ChatID: ch.ChatID, Isolation: string(ch.Isolation), Access: string(ch.Access)})
+		out = append(out, TelegramChatJSON{ChatID: ch.ChatID, Isolation: string(ch.Isolation), Access: string(ch.Access), Workspace: ch.Workspace})
 	}
 	return out
 }
@@ -1135,7 +1141,7 @@ func userGroupsFromJSON(groups []TelegramUserGroupJSON) []GatewayUserGroup {
 func chatsFromJSON(chats []TelegramChatJSON) []GatewayChatConfig {
 	var out []GatewayChatConfig
 	for _, ch := range chats {
-		out = append(out, GatewayChatConfig{ChatID: ch.ChatID, Isolation: IsolationMode(ch.Isolation), Access: AccessLevel(ch.Access)})
+		out = append(out, GatewayChatConfig{ChatID: ch.ChatID, Isolation: IsolationMode(ch.Isolation), Access: AccessLevel(ch.Access), Workspace: ch.Workspace})
 	}
 	return out
 }

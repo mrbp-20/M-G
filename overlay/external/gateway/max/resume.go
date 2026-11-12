@@ -277,7 +277,12 @@ func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionL
 		return "▶️ Эта беседа уже открыта: " + b.resumeLabel(row) + "\n" + id, [][]Button{}
 	}
 
-	st, err := b.runner.EnsureHTTPSession(ctx, id, b.cwd)
+	dir, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
+	if dirErr != nil {
+		b.log.Warn("max: resume directory", "err", dirErr, "chat", in.chatID)
+		return "❌ Каталог группы недоступен, открыть беседу не могу.", [][]Button{}
+	}
+	st, err := b.runner.EnsureHTTPSession(ctx, id, dir)
 	if err != nil {
 		b.log.Warn("max: resume session", "err", err, "session", id, "user", in.userID, "chat", in.chatID)
 		text := "❌ Не удалось открыть беседу: " + err.Error()

@@ -106,7 +106,7 @@ refuses the message itself, a line saying so goes to the chat: a promise does no
 
 What changes the settings - the settings commands, `/model` and `/clear` - is the admins' (`admins`) in every chat: anybody else is answered *Менять настройки в этом чате могут только админы бота.* `/resume` is the admins' in every chat as well, but it answers in its own words - *Показывать и переключать беседы могут только админы бота.* - because it changes no setting: the list holds every conversation the bot has, and a chat bound to somebody else's session shows their history from the next turn on. The modes and the reasoning level stay available to everybody where the chat is not shared; in a group they are the admins' too, and a direct chat has no members to share anything with. Anything else that starts with a slash is not a command: in a person's message it is ordinary text and goes to the agent as written - that is how a question quoting a line that begins with a slash still arrives (the invisible characters a client puts behind a quoted slash are dropped before the message is read, or the command name came out spoiled and the whole message vanished). A bot sender is never answered at all.
 
-The client offers these when somebody types `/`: at every start the bot publishes its list through `PATCH /me/commands` (at most 32 commands, a name up to 64 characters, a description up to 128; an empty list takes the hints away). The descriptions are in Russian, because MAX is a Russian product and the person reads them there, while the command names stay in Latin since they are what gets typed. The published list is the short one a person meets first: `think`, `nothink`, `reasoning` and `toolset` work and are handed to the session, but stay out of the hints, as the aliases `effort` and `no_think` do. A refused publish is a warning in the log, not a failure: the bot answers without hints and publishes again at the next start.
+The client offers these when somebody types `/`: at every start the bot publishes its list through `PATCH /me/commands` (at most 32 commands, a name up to 64 characters, a description up to 128; an empty list takes the hints away). The descriptions are in Russian, because MAX is a Russian product and the person reads them there, while the command names stay in Latin since they are what gets typed. The published list is five commands - `start`, `help`, `stop`, `context`, `goal`: MAX keeps one list per bot and shows the same one in a group, so everything that changes a conversation whole (`/model`, `/clear`, `/resume` and the three modes) stays out of the hints. Those commands work and `helpText` names them; in a group they answer admins only. The catalogue works too but never appears in the hints: `think`, `nothink`, `reasoning` and `toolset` work and are handed to the session, but stay out of the hints, as the aliases `effort` and `no_think` do. A refused publish is a warning in the log, not a failure: the bot answers without hints and publishes again at the next start.
 
 ## What somebody who is not an admin may do
 
@@ -133,6 +133,8 @@ switch card, never before it, and a switch into a conversation that stands still
 «в беседе ждёт ответа вопрос — карточка ниже» instead of calling that work.
 
 A line and the picture it is about are two messages of MAX, a second or two apart, and the bot holds both for a moment - three seconds, restarted with every new message of the chat - so they run as one turn: the answer covers the text and the picture together, instead of answering the text and then taking the picture as a separate question. A command never waits: it is answered at once, and whatever the chat held before it goes first, so the order of what was written stays the order of what is answered. The wait only delays the start of the turn; what is held has already passed the polling cursor, so a stop hands it over instead of losing it.
+
+One line of a turn can reach a chat by more than one road - the turn's own sender and the chat mirror that follows the session - and both end in the same call to the platform. The gateway remembers what it posted for the last three seconds and does not send a second copy of the same line into the same chat: an answer the person reads once is written once, and the dropped copy is named in the journal (`max: duplicate line dropped`).
 
 The answer is posted as one message at its first words and edited in place while it is written, with the running tool's name under it; at the end the message is replaced by the full answer. An answer longer than 4000 runes is split into further messages without cutting a rune. The sender keeps to about two writes a second, so the answer is delivered in chunks rather than refused.
 
@@ -161,6 +163,48 @@ The folder belongs to the conversation and sits inside its working directory: do
 `Max-in/Docs`, pictures, video and recordings in `Max-in/Media`. The only per-file limit is the
 platform's - MAX takes a document up to 4 GB. If the working directory is a git repository the folder
 shows up in `git status`, so keep it ignored.
+
+## Groups
+
+Whether the gateway works in groups at all is decided by the build. Without the `gateway.max.groups`
+tag there is no group code in the binary, and the gateway works in direct chats only; `/help` says so:
+"Группы: выключены в этой сборке". A configuration that describes a group cannot be honoured by such a build,
+and the bot says so once at startup - in the log and in a letter to the admins - while the group itself
+stays unanswered. The gateway keeps running: one mistyped group must not take the personal chats down.
+
+With the tag, a group works only when it is listed in `gateways.max.chats` together with a path and an
+access level:
+
+```yaml
+gateways:
+  max:
+    chats:
+      - chat_id: -70330638164134
+        workspace: /srv/max-groups/podborka   # an absolute path, required
+        access: group:testers                  # admins, all or group:<name>, required
+        isolation: individual                  # optional
+```
+
+A group the configuration does not name gets no answers at all: no reply, no incoming file saved, no
+session. The reason goes to the log once per chat (`max: group not answered`), not once per message.
+
+An entry that is incomplete - no path, a relative path, no access level - is reported once at startup,
+in the log as an error and in a letter to the admins, and that group stays unanswered. The rest of the
+gateway, personal chats included, keeps working.
+
+Being added to a group is reported to the admins - every admin, each in their own chat - with the group
+title, its `chat_id` and who invited the bot. Being removed is reported the same way; a change of the
+bot's own permissions is logged only. Nothing appears in the group itself.
+
+A group's turn works in that directory and cannot leave it: reading, writing, incoming files and
+outgoing documents all stay inside. The path is resolved to its real self (symlinks followed), because
+otherwise the confinement would speak of the name of a place rather than the place. The bot creates
+nothing: a directory that is missing or disappears leaves the group unanswered, and the admins receive a
+letter with the path and the reason once an hour; when the directory comes back, work continues by
+itself, with no restart.
+
+A group's session is created in that directory. If a group's directory changes, a new session begins and
+the previous conversation stays in the web interface, unbroken.
 
 ## Permissions
 

@@ -50,7 +50,7 @@ Feature: MAX chat turns
     And the agent was asked "look at the picture"
 
   Scenario: the bot tells the client which commands it answers
-    Then the bot published 11 commands
+    Then the bot published 5 commands
     And the first published command is "start"
 
   Scenario: a member is not shown the list of conversations

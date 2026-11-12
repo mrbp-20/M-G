@@ -178,6 +178,15 @@ type GatewayChatConfig struct {
 	ChatID    int64         `yaml:"chat_id"`
 	Isolation IsolationMode `yaml:"isolation"`
 	Access    AccessLevel   `yaml:"access"`
+
+	// Workspace is the directory the bot is confined to in this chat, and the
+	// only one it may read. It is what makes a group chat possible at all: a
+	// group without a workspace is a group the bot does not work in, exactly as
+	// if the chat were absent from the configuration. Absolute paths only - a
+	// relative one means different places depending on where Coddy was started.
+	// The path is not created and not checked at load time: a missing directory
+	// is a runtime refusal, reported to the bot's admins.
+	Workspace string `yaml:"workspace"`
 }
 
 // TelegramUserGroup is a named set of Telegram user IDs.
@@ -472,6 +481,11 @@ func (m *MaxGatewayConfig) Normalize() {
 	m.CAFile = strings.TrimSpace(m.CAFile)
 	m.DefaultAccess = AccessLevel(strings.TrimSpace(string(m.DefaultAccess)))
 	m.DefaultIsolation = IsolationMode(strings.TrimSpace(string(m.DefaultIsolation)))
+	for i := range m.Chats {
+		m.Chats[i].Access = AccessLevel(strings.TrimSpace(string(m.Chats[i].Access)))
+		m.Chats[i].Isolation = IsolationMode(strings.TrimSpace(string(m.Chats[i].Isolation)))
+		m.Chats[i].Workspace = strings.TrimSpace(m.Chats[i].Workspace)
+	}
 }
 
 // ApplyDefaults fills zero values with safe defaults.

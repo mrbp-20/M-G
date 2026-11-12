@@ -580,9 +580,12 @@ func subsystems(rt *serve.Runtime, deps subsystemDeps) []serve.Subsystem {
 					Cfg: cfg, Mgr: rt.Mgr, Log: rt.Log,
 					DefaultCWD: rt.Paths.CWD, Home: deps.home,
 					ListenAddr: deps.httpListenAddr(cfg), ExtraAuthTokens: deps.httpAuthTokens,
-					ExtraLogin: deps.httpLogin, Mirror: rt, DetachedPrompts: rt, Wakes: rt,
-					// The way back: a turn this server starts reads in the chats
-					// its session is bound to (httpserver.ChatMirrors).
+					ExtraLogin: deps.httpLogin, DetachedPrompts: rt, Wakes: rt,
+					// The way back - and the only way: a turn this server starts
+					// reads in the chats its session is bound to, through the
+					// chat mirror below. Handing the same server `Mirror: rt` as
+					// well put every line into the chat twice, half a second
+					// apart: two roads, one destination.
 					ChatMirrors:     rt,
 					UnbuiltSections: unbuilt, Status: rt.StatusDocument,
 					OnServer: func(s *httpserver.Server) {

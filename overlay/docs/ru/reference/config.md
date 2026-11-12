@@ -421,6 +421,7 @@ VS Code (с расширением YAML), Zed, Neovim и Helix подхваты�
 | `gateways.telegram.chats[].chat_id` | целое число |  | ID чата Telegram (отрицательный у групп и супергрупп). |
 | `gateways.telegram.chats[].isolation` | строка, одно из `individual`, `shared`, `admin` |  | Переопределение изоляции сессий для чата. |
 | `gateways.telegram.chats[].access` | строка |  | Переопределение доступа для чата - "all", "admins" или "group:<name>". |
+| `gateways.telegram.chats[].workspace` | строка |  | Not used here: the workspace is a MAX gateway key (gateways.max.chats[].workspace), where it names the directory a group chat is confined to. |
 | `gateways.telegram.mini_app` | объект |  | Делает веб-интерфейс этого coddy serve Telegram Mini App бота. Веб-интерфейс сам подстраивается под Telegram; эти ключи сообщают боту, где он находится, чтобы бот мог настроить свою кнопку меню и отвечать на /app кнопкой, которая открывает диалог этого чата. Telegram открывает Mini App только по https, поэтому веб-интерфейс нужно опубликовать за TLS-прокси и включить вход (httpserver.login). См. https://coddy.dev/docs/surfaces/gateway#mini-app. |
 | `gateways.telegram.mini_app.url` | строка | "" | Публичный https-адрес, по которому доступен веб-интерфейс, например https://coddy.example.com/. Обычный http принимается только для loopback-хоста (офлайн-стенд вроде tgfake). Без фрагмента, потому что туда Telegram кладёт свои параметры запуска. Если пусто, бот не предлагает Mini App и не трогает кнопку меню, заданную в @BotFather. |
 | `gateways.telegram.mini_app.menu_button` | логическое значение или null | true | Сделать так, чтобы кнопка меню бота (рядом с полем сообщения) открывала веб-интерфейс. Если настройка выключена, url очищен или веб-интерфейс не требует входа, бот возвращает кнопку меню, которую заменил (Mini App, заданный в @BotFather, иначе команды), при условии что кнопка всё ещё открывает адрес, который задал бот. |
@@ -441,6 +442,7 @@ VS Code (с расширением YAML), Zed, Neovim и Helix подхваты�
 | `gateways.max.chats[].chat_id` | целое число |  | ID чата MAX. |
 | `gateways.max.chats[].isolation` | строка, одно из `individual`, `shared`, `admin` |  | Переопределение изоляции сессий для чата. |
 | `gateways.max.chats[].access` | строка |  | Переопределение доступа для чата - "all", "admins" или "group:<name>". |
+| `gateways.max.chats[].workspace` | строка |  | Directory reserved for a group chat: an absolute path, required for a group, and a group without it is not answered at all. Needs a build with the gateway.max.groups tag; a build without it refuses to start when a group is configured. |
 | `gateways.pachca` | объект |  | Адаптер интеграционного бота Pachca - читает историю событий бота и отвечает через REST API Pachca. Включите сохранение истории событий (events_history_enabled) в настройках исходящего вебхука бота. См. https://coddy.dev/docs/surfaces/pachca. |
 | `gateways.pachca.enable` | логическое значение | false | Запускать бота Pachca в этом процессе coddy serve. |
 | `gateways.pachca.token` | строка | "" | Токен доступа интеграционного бота Pachca. Оставьте пустым, чтобы читать переменную окружения PACHCA_BOT_TOKEN (например, через ~/.coddy/.env). |
@@ -456,6 +458,7 @@ VS Code (с расширением YAML), Zed, Neovim и Helix подхваты�
 | `gateways.pachca.chats[].chat_id` | целое число |  | ID чата Pachca. |
 | `gateways.pachca.chats[].isolation` | строка, одно из `individual`, `shared`, `admin` |  | Переопределение изоляции сессий для чата. |
 | `gateways.pachca.chats[].access` | строка |  | Переопределение доступа для чата - "all", "admins" или "group:<name>". |
+| `gateways.pachca.chats[].workspace` | строка |  | Not used here: the workspace is a MAX gateway key (gateways.max.chats[].workspace), where it names the directory a group chat is confined to. |
 
 ### `browser`
 

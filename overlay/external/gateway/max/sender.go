@@ -203,6 +203,10 @@ func (s *Sender) SendSessionUpdate(sessionID string, update interface{}) error {
 		token := s.detailTokens[u.ToolCallID]
 		mid := s.detailMessages[u.ToolCallID]
 		s.mu.Unlock()
+		// A restricted turn is where an attempt to leave the workspace ends:
+		// name the tool and the reason in the journal, so the refusal is on
+		// record and not only in the chat.
+		s.refusalOfNonAdmin(token, u.Status, u.Content)
 		// The update that starts a call carries its arguments: that is what the
 		// call is called by, and it is not the call's output.
 		if u.Status == "in_progress" {
@@ -243,6 +247,11 @@ func outgoingAnswer(text string) string {
 // post sends a message of its own: a note that does not belong to the answer.
 func (s *Sender) post(text string) {
 	if s.isDetached() {
+		return
+	}
+	if s.b.sent.repeat(s.target, text) {
+		s.b.log.Debug("max: duplicate line dropped", "target", s.target, "runes", len([]rune(text)))
+
 		return
 	}
 
@@ -287,9 +296,45 @@ func (s *Sender) Flush() {
 // deliver posts one piece of the answer. The pieces go out in order, one after
 // another, so the closing answer reads the way the turn wrote it.
 func (s *Sender) deliver(ctx context.Context, text string) {
+	if s.b.sent.repeat(s.target, text) {
+		s.b.log.Debug("max: duplicate answer dropped", "target", s.target, "runes", len([]rune(text)))
+
+		return
+	}
 	if _, err := s.c.Send(ctx, Outgoing{Target: s.target, Text: text, Format: "markdown"}); err != nil {
 		s.b.log.Warn("max: answer not delivered", "err", err, "target", s.target)
 	}
+}
+
+// refusalOfNonAdmin says in the journal what a restricted turn was stopped at:
+// the tool, the status the core gave the call and the first line of what came
+// back. Only a turn of somebody who is not the bot's admin is written - a failed
+// call in an ordinary turn is the agent's own business, and a journal nobody can
+// read is worse than none.
+func (s *Sender) refusalOfNonAdmin(token, status string, items []acp.ToolCallResultItem) {
+	if !s.refuseApprovals || status == "" || status == "in_progress" || status == "completed" {
+		return
+	}
+	title := "?"
+	if d, ok := s.b.details.get(token); ok && d.Title != "" {
+		title = d.Title
+	}
+	reason := firstLine(toolCallBody(items))
+	if reason == "" {
+		reason = "the core stopped the call"
+	}
+	s.b.log.Info("max: refusal to a non-admin", "tool", title, "status", status, "reason", reason)
+}
+
+// firstLine is the first line of a text, cut to what a journal line can hold.
+func firstLine(text string) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	line, _, _ := strings.Cut(text, "\n")
+
+	return shortenRunes(line, 160)
 }
 
 // RequestPermission asks the chat about a tool call of a subagent, with one
@@ -298,6 +343,10 @@ func (s *Sender) deliver(ctx context.Context, text string) {
 // which is what the mode stamped on the request says.
 func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionRequestParams) (*acp.PermissionResult, error) {
 	if s.refuseApprovals {
+		s.b.log.Info("max: refusal to a non-admin",
+			"tool", firstLine(permissionText(params)), "status", "asked",
+			"reason", "a non-admin turn approves nothing")
+
 		return &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}, nil
 	}
 	if mode := strings.TrimSpace(params.EffectivePermissionMode); mode == "" || mode == config.PermModeBypass {
@@ -619,7 +668,12 @@ func (b *Bot) handleModelAction(ctx context.Context, c *Client, u Update, cb Cal
 
 	isolation := access.EffectiveIsolation(chatID, b.cfg)
 	key := sessionstore.SessionKey(adapterName, chatID, from.UserID, isolation, isGroup)
-	st, err := b.ensureSession(ctx, key)
+	dir, dirErr := b.turnDir(ctx, chatID, isGroup)
+	if dirErr != nil {
+		b.log.Warn("max: group directory", "err", dirErr, "chat", chatID)
+		return "", nil
+	}
+	st, err := b.ensureSession(ctx, key, dir)
 	if err != nil {
 		b.log.Warn("max: callback session", "err", err, "user", from.UserID, "chat", chatID)
 		return "❌ Session error: " + err.Error(), nil

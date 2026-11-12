@@ -4,17 +4,20 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-20 files, 43 types, 268 functions; 297 of 311 carry a description in the code.
+23 files, 46 types, 299 functions; 324 of 345 carry a description in the code.
 
 ## Contents
 
-- [external/gateway/max/bot.go](#externalgatewaymaxbotgo) — 3 types, 14 functions
+- [external/gateway/max/bot.go](#externalgatewaymaxbotgo) — 3 types, 16 functions
 - [external/gateway/max/burst.go](#externalgatewaymaxburstgo) — 2 types, 6 functions
 - [external/gateway/max/client.go](#externalgatewaymaxclientgo) — 5 types, 35 functions
 - [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — 1 types, 22 functions
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — 1 types, 2 functions
-- [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 20 functions
+- [external/gateway/max/dedupe.go](#externalgatewaymaxdedupego) — 1 types, 2 functions
+- [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 21 functions
 - [external/gateway/max/documents.go](#externalgatewaymaxdocumentsgo) — 1 types, 14 functions
+- [external/gateway/max/groups.go](#externalgatewaymaxgroupsgo) — 1 types, 16 functions
+- [external/gateway/max/groups_stub.go](#externalgatewaymaxgroups_stubgo) — 1 types, 8 functions
 - [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — 1 types, 13 functions
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — 1 types, 19 functions
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — 1 types, 6 functions
@@ -25,7 +28,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/poll.go](#externalgatewaymaxpollgo) — 1 types, 3 functions
 - [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — 0 types, 3 functions
 - [external/gateway/max/resume.go](#externalgatewaymaxresumego) — 4 types, 24 functions
-- [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — 4 types, 38 functions
+- [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — 4 types, 40 functions
 - [external/gateway/max/stop.go](#externalgatewaymaxstopgo) — 0 types, 9 functions
 - [external/gateway/max/tooldetails.go](#externalgatewaymaxtooldetailsgo) — 2 types, 15 functions
 
@@ -43,6 +46,8 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (b *Bot) untrackSender(s *Sender)` — untrackSender forgets a turn that ended.
 - `func (b *Bot) detachChat(chat Target, keep string) int` — detachChat stops the turns of a chat that no longer owns them: after a switch to another conversation they keep running in their own sessions, where the web UI still shows them, but they stop writing into the chat. Only a document still goes out, because it was asked for here (documents.go).
 - `func New(cfg *config.MaxGatewayConfig, runner SessionRunner, cwd string, log *slog.Logger, storePath, cursorPath string, mirror session.TurnMirror) *Bot` — New returns a MAX adapter reading cfg, keeping its poll marker in cursorPath and the chat-to-session map in storePath; "" for either keeps it in memory only. The logger is expected to be tagged with the gateway.max component, which serve_max.go does.
+- `func (b *Bot) notifyAdmins(ctx context.Context, text string)` — notifyAdmins sends one message to every admin of the bot, each in their own chat. One admin's failure does not stop the others, and a failure is said in the log rather than swallowed.
+- `func (b *Bot) reportGroupProblems(ctx context.Context)` — reportGroupProblems says once, at startup, which group entries cannot be used and why. Those groups stay unanswered; everything else works.
 - `func (b *Bot) Name() string { return "max" }` — Name satisfies gateway.Adapter.
 - `func (b *Bot) apiBaseURL() string` — apiBaseURL is the API root this bot talks to: CODDY_MAX_API_BASE when set, the v2 host otherwise.
 - `func (b *Bot) Start(ctx context.Context) error` — Start connects to the MAX Bot API and runs the update loop until ctx is cancelled. The loop hands every update to the bot itself, which turns a message into a session turn and a callback into the answer of a waiting prompt.
@@ -159,8 +164,19 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 
 ### Functions
 
-- `func botCommands() []BotCommand` — botCommands is the menu published at Start: the short list a person meets first, the same shape the Telegram side publishes. It holds the commands processMessage answers itself (start, help, model, context, clear) and the three modes (agent, plan, ask), with goal closing it. The rest of the settings catalogue (reasoning, think, nothink, toolset, plus the aliases effort and no_think) works and is handed to the session, but it stays out of the hints: it is what somebody reaches for after the short list, not what a first "/" should offer. Adding one is a one-line change here, and commands_menu_test.go holds the platform bounds when that happens. Names carry no slash, since the client adds it.
+- `func botCommands() []BotCommand` — _no description in the code_
 - `func (b *Bot) publishCommands(ctx context.Context)` — publishCommands replaces the messenger's hint list with botCommands. It is best effort on purpose: a bot that cannot publish its hints still answers people, so the failure is logged and never returned. A stopped bot has no client to publish through, and nothing to publish for.
+
+## external/gateway/max/dedupe.go
+
+### Types
+
+- `type dupGuard struct` — dupGuard remembers what this bot has just posted, so a second path cannot post the same line into the same chat again. The window is time-based on purpose: the two paths run in different goroutines and share no identifier.
+
+### Functions
+
+- `func newDupGuard() *dupGuard` — _no description in the code_
+- `func (g *dupGuard) repeat(target Target, text string) bool` — repeat answers whether this exact text already went to this exact target inside the window, remembering it when it did not.
 
 ## external/gateway/max/dispatch.go
 
@@ -185,7 +201,8 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (b *Bot) runTurn(ctx context.Context, params acp.SessionPromptParams, sender acp.UpdateSender, opts *session.PromptRunOpts, onBusy func()) (*acp.SessionPromptResult, error)` — runTurn runs one turn, waiting out a session whose previous turn has not finished yet.
 - `func (b *Bot) answerTarget(in inbound) Target` — answerTarget is where the answer to in goes.
 - `func (b *Bot) reply(ctx context.Context, in inbound, text string)` — reply posts a short service message into the chat the message came from.
-- `func (b *Bot) ensureSession(ctx context.Context, key string) (*session.State, error)` — ensureSession gets or creates the session for key. A conversation this gateway starts is stamped with where it came from.
+- `func (b *Bot) turnDir(ctx context.Context, chatID int64, isGroup bool) (string, error)` — turnDir is the directory a turn works in: the gateway's own for a direct chat, the group's configured workspace for a group.
+- `func (b *Bot) ensureSession(ctx context.Context, key, dir string) (*session.State, error)` — ensureSession gets or creates the session for key in dir. A conversation this gateway starts is stamped with where it came from. A session keeps the directory it was created in, so a chat that ends up in another directory gets a session of its own: the old one stays on disk and stays readable in the web interface, and nothing is thrown away to change a path.
 - `func (b *Bot) applyInitialModel(ctx context.Context, st *session.State)` — applyInitialModel stamps the gateway's own model on a session that is just beginning: the model last picked on this surface, or the alphabetically first configured one. A session that already chose keeps its model.
 - `func rawUpdate(u Update) string` — rawUpdate is the update as it came off the wire, cut to a readable length. The bytes kept at parse time are preferred: marshalling our own struct back would hide a field the struct does not name.
 - `func newSeenIDs(limit int) *seenIDs` — _no description in the code_
@@ -214,6 +231,48 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (s *Sender) refuseFile(name, kind, reason string)` — refuseFile says in the chat why a file did not arrive, naming what it was. The turn goes on: one file's refusal is not the answer's failure.
 - `func cleanDocumentName(name, fallback string) string` — cleanDocumentName is a name a chat can show: the base of whatever came in, with control characters dropped and the length bounded.
 - `func clipRunes(s string, n int) string` — clipRunes keeps at most n runes of s, marking the cut.
+
+## external/gateway/max/groups.go
+
+### Types
+
+- `type groupGate struct` — groupGate is what this build answers about a group chat: may the bot take part at all, and is the configuration complete enough to try. A build without group support carries the same type with the opposite answers (groups_stub.go), so the rest of the adapter never asks which build it is in: there is one call in one place.
+
+### Functions
+
+- `func newGroupGate(cfg *config.MaxGatewayConfig, log *slog.Logger) *groupGate` — _no description in the code_
+- `func (g *groupGate) Enabled() bool { return true }` — Enabled reports whether this build carries group support at all.
+- `func (g *groupGate) Note() string { return "Группы: включены в этой сборке." }` — Note is the line /help shows about groups.
+- `func (g *groupGate) ConfigProblems() []string` — ConfigProblems lists the group entries this build cannot work with. A group entry is a chat with a negative id or with a workspace, and such an entry needs both the path and the access level written out: guessing either is how a bot ends up in a chat nobody meant to open. A problem does not stop the gateway. One mistyped group must not take the personal chats of its owner down, and an error returned from Start would have Coddy restart the whole adapter every five seconds. The entries are named once at startup, in the log and in a letter to the admins, and only those groups stay unanswered.
+- `func (g *groupGate) Admit(chatID int64) error` — Admit says whether the bot may take part in this group. A group that is absent from the configuration, or present without a path or without an access level, is a group the bot does not answer in - the same as a group nobody allowed.
+- `func (g *groupGate) reportOnce(chatID int64) bool` — reportOnce says whether this chat's refusal has not been logged yet: a group the bot was dragged into says one line, not one per message. A bot's log is read by a person, and a warning repeated on every message stops being read.
+- `func groupTitle(u Update) string` — groupTitle takes the chat title out of the update when the platform sends one. The shape is not documented for these update types, so the probe reads the two places a title can sit and never fails: the admins are told the title is missing rather than being told nothing.
+- `func personName(u User) string` — personName names the person an update came from, so a notification reads as something a human wrote rather than as an id.
+- `func nonEmpty(parts ...string) []string` — _no description in the code_
+- `func (b *Bot) handleGroupEvent(ctx context.Context, u Update, kind string) error` — handleGroupEvent turns a group membership change into a log line and, when it concerns the admins, into a message to each of them. Nothing is said in the group itself: the bot either works there or stays silent.
+- `func groupAddedNote(chatID int64, title, who string, allowed bool) string` — _no description in the code_
+- `func groupRemovedNote(chatID int64, title, who string) string` — _no description in the code_
+- `func placeName(title string, chatID int64) string` — placeName is the chat as an admin can recognise it: the title when the platform gave one, and the id always, because the id is what goes in the configuration.
+- `func (g *groupGate) Workspace(chatID int64) (dir, notice string, err error)` — Workspace is the directory a group works in: the configured path, resolved to its real self. Resolving is not a formality - a path that is a symlink would otherwise confine the turn in name only, and the check would compare the name of a place with the place itself. A path that is gone, unreadable or not a directory refuses the turn and, at most once an hour per chat, produces a notice for the admins. The notice is returned rather than sent: the gate has no client, and one thing that talks to MAX is enough.
+- `func resolveWorkspace(path string) (string, error)` — resolveWorkspace follows every symlink and checks that what is left is a directory the bot can open.
+- `func (g *groupGate) workspaceNotice(chatID int64, path string, cause error) string` — workspaceNotice builds the message to the admins, or returns an empty string when one already went out within the hour.
+
+## external/gateway/max/groups_stub.go
+
+### Types
+
+- `type groupGate struct` — groupGate is the group policy of a build without group support: it refuses every group, and it refuses to start when the configuration expects groups to work. The type mirrors groups.go, so the rest of the adapter has one call in one place and never asks which build it is in.
+
+### Functions
+
+- `func newGroupGate(cfg *config.MaxGatewayConfig, log *slog.Logger) *groupGate` — _no description in the code_
+- `func (g *groupGate) Enabled() bool { return false }` — Enabled reports whether this build carries group support at all.
+- `func (g *groupGate) Note() string` — Note is the line /help shows about groups.
+- `func (g *groupGate) ConfigProblems() []string` — ConfigProblems names the entries this build cannot honour. Silently ignoring them would leave a person believing the bot works in a group it cannot even see; stopping the gateway over them would take the personal chats down, so the entries are reported once at startup and stay unanswered.
+- `func (g *groupGate) Workspace(int64) (string, string, error) { return "", "", errGroupsNotBuilt }` — Workspace refuses too: a build without group support has no group directory, because it has no group.
+- `func (g *groupGate) Admit(int64) error { return errGroupsNotBuilt }` — Admit refuses every group, listed or not.
+- `func (g *groupGate) reportOnce(chatID int64) bool` — reportOnce says whether this chat's refusal has not been logged yet.
+- `func (b *Bot) handleGroupEvent(_ context.Context, u Update, kind string) error` — handleGroupEvent records a membership change and does nothing else: a build without group support has no admission rules to announce, and telling the admins about a chat the bot cannot work in would be noise.
 
 ## external/gateway/max/history.go
 
@@ -424,6 +483,8 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func (s *Sender) post(text string)` — post sends a message of its own: a note that does not belong to the answer.
 - `func (s *Sender) Flush()` — Flush posts the answer of the turn as its closing messages, continued in further messages when it does not fit in one. Everything the turn did went out before this, so the answer is the last thing the chat receives.
 - `func (s *Sender) deliver(ctx context.Context, text string)` — deliver posts one piece of the answer. The pieces go out in order, one after another, so the closing answer reads the way the turn wrote it.
+- `func (s *Sender) refusalOfNonAdmin(token, status string, items []acp.ToolCallResultItem)` — refusalOfNonAdmin says in the journal what a restricted turn was stopped at: the tool, the status the core gave the call and the first line of what came back. Only a turn of somebody who is not the bot's admin is written - a failed call in an ordinary turn is the agent's own business, and a journal nobody can read is worse than none.
+- `func firstLine(text string) string` — firstLine is the first line of a text, cut to what a journal line can hold.
 - `func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionRequestParams) (*acp.PermissionResult, error)` — RequestPermission asks the chat about a tool call of a subagent, with one button per option, and waits for the press. What the chat's own agent asks is allowed without asking: the operator who configured the bot decided that, which is what the mode stamped on the request says.
 - `func (s *Sender) RequestQuestion(ctx context.Context, params acp.QuestionRequestParams) (*acp.QuestionResult, error)` — RequestQuestion posts the question and, when it offers options, waits for one of them to be pressed. A question without options has no form here: it goes out as text and the person answers with their next message, which is why such a question contributes no answer.
 - `func (s *Sender) askOptions(ctx context.Context, text string, options []string) (int, bool)` — askOptions posts text with one button per option and waits for a press. It answers with the place of the pressed option and true, or -1 and false when nobody pressed anything before the turn ended. The message is settled either way: it says how the prompt ended and loses its keyboard, so no button of a finished prompt can be pressed again.

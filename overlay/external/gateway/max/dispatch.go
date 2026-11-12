@@ -99,6 +99,12 @@ func (b *Bot) Handle(ctx context.Context, u Update) error {
 			return nil
 		}
 		return b.handleMessage(ctx, u)
+	case "bot_added":
+		return b.handleGroupEvent(ctx, u, "added")
+	case "bot_removed":
+		return b.handleGroupEvent(ctx, u, "removed")
+	case "bot_admin_permissions_changed":
+		return b.handleGroupEvent(ctx, u, "admin_permissions_changed")
 	default:
 		// A type this adapter does not answer. It is named here, with its raw
 		// body, because the platform is free to send a message in more than one
@@ -239,6 +245,21 @@ func (b *Bot) deliver(ctx context.Context, in inbound, key string) {
 
 // allowed applies the access level and the admin-only isolation of the chat.
 func (b *Bot) allowed(chatID, userID int64, isGroup bool) bool {
+	// The chat comes before the person. Whether the bot takes part in this group
+	// at all is a question about the chat, and a group the configuration does not
+	// name - or names without a path and an access level - is one it does not
+	// answer in. Said once per chat in the log, not once per message.
+	if isGroup && b.groups != nil {
+		if err := b.groups.Admit(chatID); err != nil {
+			if b.groups.reportOnce(chatID) {
+				b.log.Warn("max: group not answered", "chat", chatID, "user", userID, "reason", err.Error())
+			} else {
+				b.log.Debug("max: group not answered", "chat", chatID, "user", userID, "reason", err.Error())
+			}
+
+			return false
+		}
+	}
 	level := access.EffectiveAccess(chatID, b.cfg)
 	if !access.CanAccess(userID, level, b.cfg) {
 		b.log.Debug("max: update ignored", "reason", "access denied", "user", userID, "chat", chatID)
@@ -431,7 +452,16 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 	// answer, which is most of a slow turn.
 	stopTyping := b.typingKeepAlive(tctx, in.chatID)
 	defer stopTyping()
-	st, err := b.ensureSession(tctx, key)
+	// Where this turn works: the gateway's own directory in a direct chat, the
+	// group's configured one in a group. A group whose directory is gone does
+	// not work at all, and the chat itself is told nothing - the admins are, at
+	// most once an hour, because a broken path is their file to fix.
+	dir, dirErr := b.turnDir(tctx, in.chatID, in.isGroup)
+	if dirErr != nil {
+		b.log.Warn("max: group directory", "err", dirErr, "chat", in.chatID, "user", in.userID)
+		return
+	}
+	st, err := b.ensureSession(tctx, key, dir)
 	if err != nil {
 		b.log.Warn("max: ensure session", "err", err)
 		b.reply(ctx, in, "Не удалось начать беседу: "+err.Error())
@@ -467,6 +497,10 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 	if !b.cfg.IsAdmin(in.userID) {
 		restriction = access.NonAdminTurn()
 		sender.refuseApprovals = true
+		// The journal says whose turn this is and what it may do, so a refusal
+		// later in the same turn has a context to be read in.
+		b.log.Info("max: non-admin turn", "chat", in.chatID, "user", in.userID,
+			"note", "reading inside the chat's workspace only, approvals refused")
 	}
 	// Anything else in this process that can show a session follows along;
 	// permission prompts and questions stay with the chat.
@@ -662,18 +696,51 @@ func (b *Bot) reply(ctx context.Context, in inbound, text string) {
 	}
 }
 
-// ensureSession gets or creates the session for key. A conversation this
+// turnDir is the directory a turn works in: the gateway's own for a direct
+// chat, the group's configured workspace for a group.
+func (b *Bot) turnDir(ctx context.Context, chatID int64, isGroup bool) (string, error) {
+	if !isGroup || b.groups == nil {
+		return b.cwd, nil
+	}
+	dir, notice, err := b.groups.Workspace(chatID)
+	if notice != "" {
+		b.notifyAdmins(ctx, notice)
+	}
+	if err != nil {
+		return "", err
+	}
+
+	return dir, nil
+}
+
+// ensureSession gets or creates the session for key in dir. A conversation this
 // gateway starts is stamped with where it came from.
-func (b *Bot) ensureSession(ctx context.Context, key string) (*session.State, error) {
+//
+// A session keeps the directory it was created in, so a chat that ends up in
+// another directory gets a session of its own: the old one stays on disk and
+// stays readable in the web interface, and nothing is thrown away to change a
+// path.
+func (b *Bot) ensureSession(ctx context.Context, key, dir string) (*session.State, error) {
 	fresh := b.store.Peek(key) == ""
-	st, err := b.runner.EnsureHTTPSession(ctx, b.store.Get(key), b.cwd)
+	st, err := b.runner.EnsureHTTPSession(ctx, b.store.Get(key), dir)
 	if err != nil {
 		return nil, err
+	}
+	if dir != "" && st.GetCWD() != dir {
+		old := b.store.Get(key)
+		b.store.Reset(key)
+		b.runner.ForgetLiveSession(old)
+		b.log.Info("max: session moved to the chat's directory", "key", key, "old", old, "dir", dir)
+		if st, err = b.runner.EnsureHTTPSession(ctx, b.store.Get(key), dir); err != nil {
+			return nil, err
+		}
+		fresh = true
 	}
 	if fresh {
 		st.SetOrigin(session.GatewayOrigin(adapterName))
 	}
 	b.applyInitialModel(ctx, st)
+
 	return st, nil
 }
 

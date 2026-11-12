@@ -119,10 +119,16 @@ func (b *Bot) helpText() string {
 	sb.WriteString("/goal <цель> — работать над целью до готовности\n")
 	sb.WriteString("/clear — начать новую беседу\n")
 	sb.WriteString("/resume — продолжить другую беседу (выбрать из списка или назвать)\n")
+	sb.WriteString("/stop — остановить текущую работу\n")
 	sb.WriteString("/help — эта справка\n\n")
+	sb.WriteString("Настройки и режимы меняют беседу целиком, поэтому в группе они доступны только админам бота. В подсказках их нет — здесь они перечислены.\n\n")
 	sb.WriteString("**Пиктограммы**\n")
 	sb.WriteString("▶️ текущая · ✈️ из Телеграма · 🌐 из веба или консоли · 💬 другой шлюз · без пометки — эта")
 	sb.WriteString("\n\n")
+	if b.groups != nil {
+		sb.WriteString(b.groups.Note())
+		sb.WriteString("\n")
+	}
 	sb.WriteString("Ответьте на сообщение, чтобы спросить о нём.")
 	return sb.String()
 }
@@ -135,7 +141,12 @@ func (b *Bot) handleModelCommand(ctx context.Context, in inbound, key string) {
 		b.reply(ctx, in, "⚠️ Модели не настроены.")
 		return
 	}
-	st, err := b.ensureSession(ctx, key)
+	dir, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
+	if dirErr != nil {
+		b.log.Warn("max: group directory", "err", dirErr, "chat", in.chatID)
+		return
+	}
+	st, err := b.ensureSession(ctx, key, dir)
 	if err != nil {
 		b.reply(ctx, in, "Ошибка сессии: "+err.Error())
 		return
@@ -242,7 +253,12 @@ func resolveModelCallback(models []config.ModelEntry, payload string) (string, b
 
 // handleContextCommand reports the session's context breakdown.
 func (b *Bot) handleContextCommand(ctx context.Context, in inbound, key string) {
-	st, err := b.ensureSession(ctx, key)
+	dir, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
+	if dirErr != nil {
+		b.log.Warn("max: group directory", "err", dirErr, "chat", in.chatID)
+		return
+	}
+	st, err := b.ensureSession(ctx, key, dir)
 	if err != nil {
 		b.reply(ctx, in, "Ошибка сессии: "+err.Error())
 		return

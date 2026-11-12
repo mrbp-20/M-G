@@ -1,6 +1,6 @@
 # MAX gateway for Coddy — an overlay layer
 
-This is not a copy of Coddy: a layer of 166 files adds a gateway for the MAX messenger to Coddy. Coddy
+This is not a copy of Coddy: a layer of 173 files adds a gateway for the MAX messenger to Coddy. Coddy
 itself comes from its own repository —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,
 after which a build with the `gateway.max` tag produces a binary with the gateway.
@@ -9,7 +9,7 @@ after which a build with the `gateway.max` tag produces a binary with the gatewa
 
 | Item | Why |
 |---|---|
-| `overlay/` | 166 files at the same paths as in Coddy: 117 new and 49 replaced |
+| `overlay/` | 173 files at the same paths as in Coddy: 124 new and 49 replaced |
 | `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.4.5 file, sha256 of ours |
 | `apply.sh` | version check, layer application, build (Linux, WSL2) |
 | `apply.ps1`, `apply.cmd` | the same for Windows: PowerShell and a cmd wrapper |
@@ -264,16 +264,16 @@ What it prints on success.
 The compatibility check — four lines, nothing written, exit code 0:
 
 ```
-слой: 167 строк манифеста (с заголовком), база Coddy 1.4.5
+слой: 174 строк манифеста (с заголовком), база Coddy 1.4.5
 клон: C:\coddy-src
-сверка: все 166 файлов слоя совместимы с этим клоном
+сверка: все 173 файлов слоя совместимы с этим клоном
 проверка пройдена (-Check: ничего не изменено)
 ```
 
 Applying the layer adds how many files were replaced:
 
 ```
-наложено файлов: 166
+наложено файлов: 173
 
 дальше:
   .\apply.ps1 -Coddy "C:\coddy-src" -Build   # или собрать вручную:
@@ -293,7 +293,7 @@ returns code 2:
 
 ```
 СЛОЙ НЕ ПОДХОДИТ К ЭТОЙ ВЕРСИИ CODDY
-  изменённых файлов не совпало: 7 из 166, отсутствует: 0
+  изменённых файлов не совпало: 7 из 173, отсутствует: 0
     internal/agent/react.go
     ...
 Нужен Coddy 1.4.5 (коммит 6fa59248).
@@ -301,8 +301,8 @@ returns code 2:
 ```
 
 The lines are Russian because the installer speaks to the person in Russian; this page is their English
-translation: "layer: 167 manifest rows (with the header), Coddy base 1.4.5", "clone: …", "check: all 166
-files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 166",
+translation: "layer: 174 manifest rows (with the header), Coddy base 1.4.5", "clone: …", "check: all 173
+files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 173",
 "building", "done", and, on a mismatch, "THE LAYER DOES NOT FIT THIS CODDY VERSION".
 
 ## Running it again after an interruption
@@ -314,13 +314,13 @@ command is expected - the installer looks at what is already done and continues:
   version, the work continues in it ("клон уже на месте... продолжаю с ним"); a different version gets
   a clear message and the command to fix it;
 - files already in place and matching the layer are not copied again, so you end up with
-  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 166";
+  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 173";
 - a file damaged after the overlay is restored ("восстановлено после обрыва: N");
 - `--check` / `-Check` on a finished tree answers "слой уже наложен полностью".
 
 ## What apply.sh does
 
-1. **Checks the version.** For each of the 166 layer files it computes sha256 and compares it with the
+1. **Checks the version.** For each of the 173 layer files it computes sha256 and compares it with the
    one recorded in `MANIFEST.tsv` as the Coddy 1.4.5 file. A mismatch means the layer is not applied at
    all: the script prints which files diverged and suggests the version to take.
 2. **Copies** the `overlay/` files into the clone and, after each copy, compares sha256 with ours.
@@ -348,8 +348,101 @@ binary at all — a stub takes the adapter's place and answers honestly: "MAX is
 | no `gateway*` tags | no gateway at all: the core, the HTTP server and the web interface |
 | `gateway.telegram` | Telegram only |
 | `gateway.max` | MAX only |
+| `gateway.max,gateway.max.groups` | MAX with group chats; without the groups tag the gateway keeps to direct chats and reports a configured group once at startup, without stopping |
 | `gateway.telegram,gateway.max` | exactly two: Telegram and MAX, without Pachca |
 | `gateway` | all gateways: Telegram, MAX and Pachca |
+
+## Two builds: with groups and without them
+
+Group work is a build tag, not a setting. Without the tag the group code is not in the binary at all.
+
+| Build | Tags | What it does |
+|---|---|---|
+| without groups | `gateway.max` | personal chats; in a group the bot stays silent and names the reason in the journal |
+| with groups | `gateway.max,gateway.max.groups` | personal chats and the groups the configuration admits |
+
+Building by hand, from the Coddy tree after the overlay:
+
+```bash
+# without groups
+make build TAGS="http,ui,scheduler,memory,cli,gateway.max,swarm,browser"
+
+# with groups
+make build TAGS="http,ui,scheduler,memory,cli,gateway,gateway.max,swarm,browser,gateway.max.groups"
+```
+
+In the installer the tag set comes from `--tags` (`-Tags` in PowerShell): by default it builds the
+variant without groups, and the one with groups is the same set plus `gateway.max.groups`.
+
+Which one runs is visible two ways: the journal line `max: groups enabled=true|false` at start, and
+the `/help` command in the chat, which names the build. If groups are not needed, their absence
+breaks nothing: the gateway serves personal chats.
+
+## Configuring config.yaml
+
+The shortest entry - switch the gateway on and give it a token:
+
+```yaml
+gateways:
+  max:
+    enable: true
+    ca_file: /etc/ssl/mincifry-root.crt   # the MinCifry root certificate, see above
+    admins: [12345]                       # your MAX user ids
+```
+
+The token comes from `MAX_BOT_TOKEN` in the environment or in `~/.coddy/.env`, so the file need not
+hold it. The full entry:
+
+```yaml
+gateways:
+  max:
+    enable: true
+    token: ""                      # empty: MAX_BOT_TOKEN from the environment or ~/.coddy/.env
+    proxy: ""                      # inherit (default), none, or an http(s)/socks5(h) address
+    ca_file: /etc/ssl/mincifry-root.crt
+    poll_interval_seconds: 1       # 1..60, pause between polls
+    poll_timeout_seconds: 30       # 1..60, how long one poll is held open
+    admins: [12345]
+    default_access: all            # all | admins | group:<name>
+    default_isolation: individual  # individual | shared | admin
+    user_groups:
+      - name: devs
+        user_ids: [12345, 67890]
+    chats:
+      - chat_id: 334
+        isolation: shared
+        access: group:devs
+```
+
+`default_access` decides who may talk to the bot at all; `default_isolation` decides whether a group
+gives everybody their own conversation, one for all or one for admins only; a `chats[]` entry
+overrides both for one chat. A personal chat always has its own conversation.
+
+Groups (only in a build with the `gateway.max.groups` tag) need both an access level and an absolute
+path:
+
+```yaml
+gateways:
+  max:
+    chats:
+      - chat_id: -70330638164134
+        workspace: /srv/max-groups/podborka   # absolute path, required
+        access: group:testers                 # admins, all or group:<name>, required
+        isolation: individual                 # optional
+```
+
+What matters before the first group:
+
+- you create the directory, the bot never does; without it the group stays silent;
+- without a path or without access the group does not work, and the entry is named once at start:
+  as an error in the journal and as a letter to the admins;
+- a group the configuration does not name gets no answer: the reason is written once per chat;
+- a non-admin works inside the group directory only - reading, search, file listing, no shell; a
+  refusal is named in the journal as `max: refusal to a non-admin`;
+- the group number arrives by letter when the bot is added, and the journal names it too;
+- two groups may share one directory: that is the administrator's decision.
+
+The same settings are on the **Gateways** tab of the web interface.
 
 ## After the overlay
 
