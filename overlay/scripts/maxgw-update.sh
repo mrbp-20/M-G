@@ -19,14 +19,36 @@ set -uo pipefail
 UPSTREAM_REMOTE="${MAXGW_UPSTREAM_REMOTE:-upstream}"
 UPSTREAM_BRANCH="${MAXGW_UPSTREAM_BRANCH:-main}"
 OUR_BRANCH="${MAXGW_BRANCH:-main}"
-BUILD_TAGS="${MAXGW_TAGS:-http,ui,scheduler,memory,cli,gateway,swarm}"
+# browser is in the default set: this machine's configuration carries browser.enable: true, and
+# Coddy refuses to start when the configuration enables a surface the binary cannot run
+# (10.11.2026: a build without it left both bots down for 22 minutes).
+BUILD_TAGS="${MAXGW_TAGS:-http,ui,scheduler,memory,cli,gateway,swarm,browser}"
 ADAPTER_PKG="./external/gateway/max/"
 BIN_DIR="${MAXGW_BIN_DIR:-$HOME/.local/bin}"
 START_SCRIPT="${MAXGW_START_SCRIPT:-$HOME/start_coddy.sh}"
 BIN_NAME=coddy
+# The service writes its stdout where the start script sends it; the path is a setting, not a
+# constant, because this script ships to other machines.
+STDOUT_LOG="${MAXGW_STDOUT_LOG:-$HOME/coddy/logs/coddy-stdout.log}"
 
 say() { printf '%s\n' "$*"; }
 die() { printf 'error: %s\n' "$*" >&2; exit 2; }
+
+# check_subsystems refuses a build that cannot run the configuration this machine carries.
+# Coddy names the gap itself - "browser.enable is true but this binary has no browser support
+# (rebuild with -tags browser)" - and exits, so asking the candidate binary before the running
+# service is replaced is the cheapest possible guard. A port already in use is the running
+# service, not a fault of the build, so only the missing-subsystem error counts.
+check_subsystems() {
+	local bin="$1" out
+	[ -x "$bin" ] || die "cannot check $bin: not executable"
+	out=$(CODDY_HOME="${CODDY_HOME:-$HOME/.coddy}" "$bin" serve --dry-run --test-config 2>&1)
+	if printf '%s' "$out" | grep -q 'rebuild with -tags'; then
+		printf '%s\n' "$out" | grep -E 'rebuild with -tags' | sed 's/^[[:space:]]*/  /' >&2
+		die "this build misses a subsystem the configuration enables; nothing was installed"
+	fi
+	return 0
+}
 
 # DRY_WORKTREE is the throwaway worktree --dry rehearses in. An EXIT trap cannot read a
 # local variable, so the path lives here and cleanup_dry clears it once the tree is gone.
@@ -181,6 +203,8 @@ cmd_install() {
 		say "the installed binary is already this build ($stamp)"
 		return 0
 	fi
+	# Nothing on disk changes until the candidate proves it can run this configuration.
+	check_subsystems "$src"
 	if [ -f "$dst" ]; then
 		bak="$dst.$stamp.bak-$(date +%Y%m%d-%H%M%S)"
 		cp -p "$dst" "$bak" || die "cannot back up $dst"
@@ -197,12 +221,30 @@ cmd_install() {
 	setsid --fork bash -c "
 		sleep 45
 		echo \"=== \$(date -Is) restart after install of $stamp ===\" >>'$log'
-		pkill -x $BIN_NAME
-		sleep 2
+		# The start script stops the service itself. A pkill here is not only redundant but
+		# harmful: this very shell carries the pattern in its own command line, so
+		# `pkill -f '<binary> serve'` would kill the restarter too (12.11.2026).
 		bash '$START_SCRIPT' >>'$log' 2>&1
-		sleep 3
-		'$dst' -v >>'$log' 2>&1
-		pgrep -ax $BIN_NAME >>'$log' 2>&1
+		echo \"restart script exit: \$?\" >>'$log'
+		sleep 5
+		if ss -tln 2>/dev/null | grep -q ':12345'; then
+			echo \"ok: the service answers on port 12345 as $stamp\" >>'$log'
+			'$dst' -v >>'$log' 2>&1
+			exit 0
+		fi
+		echo \"FAIL: the service did not come up as $stamp\" >>'$log'
+		tail -5 '$STDOUT_LOG' 2>/dev/null | sed 's/^/    /' >>'$log' 2>&1
+		if [ -n \"$bak\" ]; then
+			echo \"rolling back to $bak\" >>'$log'
+			cp -p '$bak' '$dst' >>'$log' 2>&1
+			bash '$START_SCRIPT' >>'$log' 2>&1
+			sleep 5
+			if ss -tln 2>/dev/null | grep -q ':12345'; then
+				echo 'rollback ok: the previous build answers again' >>'$log'
+			else
+				echo 'rollback FAILED: the service is still down, read the lines above' >>'$log'
+			fi
+		fi
 	" >/dev/null 2>&1
 	return 0
 }

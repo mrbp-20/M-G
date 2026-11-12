@@ -104,6 +104,12 @@ func isSettingsCommand(cmd string) bool {
 // the settings.
 const adminOnlyNote = "Менять настройки в этом чате могут только админы бота."
 
+// resumeOnlyNote answers a member who tried to switch the conversation. It is
+// not a setting: the list holds every conversation the bot has, and a chat
+// bound to somebody else's session shows their history, so the wording says
+// what the command does instead of borrowing the settings one (04.11.2026).
+const resumeOnlyNote = "Показывать и переключать беседы могут только админы бота."
+
 func (b *Bot) helpText() string {
 	var sb strings.Builder
 	sb.WriteString("**Команды**\n\n")

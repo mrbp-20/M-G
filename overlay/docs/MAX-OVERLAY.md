@@ -33,9 +33,19 @@ so they are counted in the first state and not in the second.
 ## Files we share with upstream
 
 50 files: every MAX change that had to land inside a file upstream also owns, does. Overlap is not conflict:
-the rebase onto 1.3.80 found the upstream side had changed 653 files between 1.3.62 and 1.3.80, 14 of them
-ours too, and the whole layer still rebased without a single conflict. The lesson stands: what matters is not
-how many files both sides touched, but whether the same lines meet.
+the rebase onto 1.4.2 found the upstream side had changed 687 files between 1.3.80 and 1.4.2, 21 of them
+ours too, and the layer rebased with a single conflict, in `README.md`, which the map below gives to us by
+intent. The lesson stands: what matters is not how many files both sides touched, but whether the same lines meet.
+
+The rebase onto 1.4.5 changed 210 upstream files between 1.4.2 and 1.4.5, 17 of them ours. Two things came
+out of it, and the second is the interesting one:
+
+- the same `README.md` conflict, resolved the same way — ours by intent;
+- a **semantic** duplicate git could not see: upstream 1.4.5 gave `internal/serve.Runtime` its own
+  `AddTurnMirror` with a set of mirrors (`mirrors`, `mirrorMu`, `mirrorSeq`), which is exactly the registry
+  we had written for ourselves. Both compiled into one method name. Ours was removed and every reader
+  (`chatMirrorList`, and through it `TurnToChats`, `SayToChats`, `SayJobReport`) now reads upstream's set.
+  Textual conflicts announce themselves; a second copy of the same idea does not — `go build` found it.
 
 ### The document seam: two files
 

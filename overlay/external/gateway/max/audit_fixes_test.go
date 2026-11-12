@@ -63,8 +63,8 @@ func TestResumeCallback_IsAdminOnlyInADirectChat(t *testing.T) {
 		t.Errorf("%d edits, want the menu refused for a member", len(edits))
 	}
 	texts := sentTexts(f)
-	if len(texts) != 1 || !strings.Contains(texts[0], adminOnlyNote) {
-		t.Fatalf("sent %q, want the admin-only note", texts)
+	if len(texts) != 1 || !strings.Contains(texts[0], resumeOnlyNote) {
+		t.Fatalf("sent %q, want the resume note", texts)
 	}
 }
 
@@ -81,8 +81,8 @@ func TestResumeCommand_IsAdminOnlyInADirectChat(t *testing.T) {
 	}, key)
 
 	texts := sentTexts(f)
-	if len(texts) != 1 || !strings.Contains(texts[0], adminOnlyNote) {
-		t.Fatalf("sent %q, want the admin-only note", texts)
+	if len(texts) != 1 || !strings.Contains(texts[0], resumeOnlyNote) {
+		t.Fatalf("sent %q, want the resume note", texts)
 	}
 }
 

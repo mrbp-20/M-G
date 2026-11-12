@@ -404,7 +404,8 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 		// else's session shows their history from the next turn on. Until the
 		// list is filtered by its owner, the command stays with the admins.
 		if !b.cfg.IsAdmin(in.userID) {
-			b.reply(ctx, in, adminOnlyNote)
+			b.log.Debug("max: update refused", "reason", "resume is admin-only", "user", in.userID, "chat", in.chatID)
+			b.reply(ctx, in, resumeOnlyNote)
 			return
 		}
 		b.handleResume(ctx, in, key, in.args)

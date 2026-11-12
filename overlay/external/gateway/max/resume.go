@@ -148,7 +148,7 @@ func (b *Bot) handleResumeAction(ctx context.Context, c *Client, u Update, rest 
 	// somebody else's history from the next turn on.
 	if !b.cfg.IsAdmin(in.userID) {
 		b.log.Debug("max: resume callback refused", "reason", "resume is admin-only", "user", in.userID, "chat", in.chatID)
-		b.resumeReply(ctx, c, in, adminOnlyNote)
+		b.resumeReply(ctx, c, in, resumeOnlyNote)
 		return nil
 	}
 

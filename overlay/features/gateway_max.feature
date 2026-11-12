@@ -55,7 +55,7 @@ Feature: MAX chat turns
 
   Scenario: a member is not shown the list of conversations
     When the person "anna" writes "/resume" in a direct chat
-    Then the direct chat with "anna" shows a bot message "Менять настройки в этом чате могут только админы бота."
+    Then the direct chat with "anna" shows a bot message "Показывать и переключать беседы могут только админы бота."
 
   Scenario: /resume answers the admin when there is nothing to resume
     Given the bot counts "anna" among its admins
