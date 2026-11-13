@@ -134,6 +134,17 @@ powershell -ExecutionPolicy Bypass -File .\apply.ps1 -Clone C:\coddy-src -Build 
   -Tags "http,scheduler,memory,cli,gateway.max,swarm"
 ```
 
+**The interface is built before the binary.** The `ui` tag embeds the *result* of the panel's build, not
+its sources: `app.js`, `styles.css` and the `chunks` directory from `external/ui`. A fresh Coddy clone has
+none of these, and a build with `ui` fails with «pattern all:chunks: no matching files found». So build the
+panel in `external/ui` first (`npm ci`, then `npm run build`), and only then build the binary. The
+`desktop` tag makes no sense without `ui`: the window shows that very panel.
+
+**If npm does not work on Windows.** Sometimes `npm ci` dies with npm's own internal error — «Exit handler
+never called!»: the packages unpack, `node_modules\.bin` stays empty, and the bundler `vite` is not found.
+Then build the panel where npm works (Linux, WSL2, any build server) and copy the contents of
+`external/ui` into the Coddy clone: it is ordinary HTML, JS and CSS, and it does not depend on the platform.
+
 ## How to install: four steps
 
 You need two things: our layer and the Coddy version the layer was made for.
@@ -195,6 +206,10 @@ cd C:\M-G
 Invoke-WebRequest -Uri https://github.com/mrbp-20/M-G/archive/refs/heads/main.zip -OutFile M-G.zip
 Expand-Archive -Path M-G.zip -DestinationPath . ; cd M-G-main
 ```
+
+If you cloned with git, PowerShell may print the progress in red with «NativeCommandError». It is not a
+failure: `git clone` writes its progress to the error stream, and PowerShell reads that as an error. The
+exit code is zero and the clone is there — check with `ls C:\M-G`.
 
 Step 2. Take the Coddy version the layer was made for:
 
@@ -524,6 +539,8 @@ In order:
 
    The first line of the output names the address for the browser (`http://127.0.0.1:12345` by
    default); the port changes with `-P`, the address with `-H`.
+   If 12345 is already taken — on Windows the WSL port forwarding holds it — the second copy needs a port
+   of its own: `-P 12346` when starting it, and the same `port` in the `httpserver` section of the config.
 7. The sign that the MAX gateway is up is the line `max bot connected` in the output and in the log.
    After it, write to the bot in a private chat and it answers.
 
