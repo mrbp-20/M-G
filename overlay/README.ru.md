@@ -41,10 +41,16 @@
 ## Сборка из исходников
 
 ```bash
-git clone https://github.com/mrbp-20/M-G
+git clone https://github.com/mrbp-20/M-G      # слой шлюза MAX
+git clone https://github.com/coddy-project/coddy-agent coddy
 cd M-G
-make build TAGS="http,ui,scheduler,memory,cli,gateway,swarm"
+bash apply.sh --coddy ../coddy --check        # каждый заменяемый файл должен совпасть
+bash apply.sh --coddy ../coddy --build        # накатить слой и собрать
 ```
+
+Слой несёт весь адаптер MAX и те вставки, которые нужны ему в общих файлах; сам Coddy берётся из
+репозитория Павла и здесь не копируется. `apply.sh --check` отказывает Coddy, у которого файлы уехали,
+— в этом и смысл: слой подходит одной версии, и версия записана в `VERSION`.
 
 Тег сборки `gateway` включает адаптер MAX (а также Telegram и Pachca). Бинарник записывается в `build/coddy`.
 

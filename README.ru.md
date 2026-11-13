@@ -435,7 +435,7 @@ gateways:
 gateways:
   max:
     chats:
-      - chat_id: -70330638164134
+      - chat_id: -1000000000001
         workspace: /srv/max-groups/podborka   # абсолютный путь, обязателен
         access: group:testers                 # admins, all или group:<имя>, обязателен
         isolation: individual                 # необязательно

@@ -440,7 +440,7 @@ path:
 gateways:
   max:
     chats:
-      - chat_id: -70330638164134
+      - chat_id: -1000000000001
         workspace: /srv/max-groups/podborka   # absolute path, required
         access: group:testers                 # admins, all or group:<name>, required
         isolation: individual                 # optional

@@ -1,0 +1,68 @@
+name: Layer build
+
+# Настоящая сборка, а не только проверка состава: клон Coddy той версии, под
+# которую сделан слой, накат, форматирование, сборка в двух режимах и тесты
+# шлюза. Ради этого рабочий процесс и существует: до него публичный репозиторий
+# проверял целостность пакета, но никто не собирал результат наложения.
+#
+# Тег ui здесь намеренно не берётся: панель в свежем клоне не собрана, а к слою
+# отношения не имеет. Всё, что относится к шлюзу, собирается и без неё.
+#
+# Действия закреплены по отпечатку коммита, а не по тегу: тег можно переписать.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Наложение слоя, сборка и тесты
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5
+        with:
+          go-version: '1.27.x'
+          cache: false
+
+      - name: Взять Coddy той версии, под которую сделан слой
+        run: |
+          BASE_TAG=$(grep -m1 '^BASE_TAG=' VERSION | cut -d= -f2)
+          echo "база: $BASE_TAG"
+          git clone --depth 1 --branch "$BASE_TAG" https://github.com/coddy-project/coddy-agent.git ../coddy
+
+      - name: Сверка слоя с клоном
+        run: bash apply.sh --coddy ../coddy --check
+
+      - name: Наложение слоя
+        run: bash apply.sh --coddy ../coddy
+
+      - name: Форматирование того, что несёт слой
+        run: |
+          bad=$(find overlay -name '*.go' -print0 | xargs -0 gofmt -s -l)
+          if [ -n "$bad" ]; then
+            echo "не отформатировано:"
+            echo "$bad"
+            exit 1
+          fi
+
+      - name: Сборка и проверка
+        working-directory: ../coddy
+        run: |
+          go build -tags "http,scheduler,memory,cli,gateway,gateway.max,swarm" ./...
+          go build -tags gateway.max ./...
+          go vet -tags gateway.max ./external/gateway/max/
+
+      - name: Тесты шлюза
+        working-directory: ../coddy
+        run: go test -tags gateway.max -race -count=1 ./external/gateway/max/
+
+      - name: Сценарии BDD
+        working-directory: ../coddy
+        run: go test -tags gateway.max -count=1 -run 'TestFeatures|TestGateway' ./external/gateway/max/

@@ -20,7 +20,8 @@ jobs:
     name: Состав, манифест, секреты, синтаксис
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # По отпечатку коммита, а не по тегу: тег можно переписать, отпечаток — нет.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
 
       - name: Проверки пакета
         run: bash checks.sh
