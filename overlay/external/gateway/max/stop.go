@@ -117,6 +117,17 @@ func (b *Bot) unregisterTurn(key string) {
 	b.runningMu.Unlock()
 }
 
+// turnOurs reports whether the turn of this chat was started through the
+// gateway. A turn of the same process that is not on record here was started in
+// another window, and its answer has to be fetched into the chat (lateanswer.go).
+func (b *Bot) turnOurs(key string) bool {
+	b.runningMu.Lock()
+	defer b.runningMu.Unlock()
+	_, ok := b.running[key]
+
+	return ok
+}
+
 // cancelTurn ends the turn of key and reports whether there was one to end.
 func (b *Bot) cancelTurn(key string) bool {
 	b.runningMu.Lock()

@@ -349,7 +349,12 @@ func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionReq
 
 		return &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}, nil
 	}
-	if mode := strings.TrimSpace(params.EffectivePermissionMode); mode == "" || mode == config.PermModeBypass {
+	// Only an explicit "no questions" lets the chat answer for the person. An
+	// empty stamp does not: the caller asks us only after its own check decided
+	// that a person has to answer, so a request without a stamp is a question,
+	// not a permission. Answering it silently gave an approval nobody saw and
+	// left the window waiting for a press that never came (13.11.2026).
+	if mode := strings.TrimSpace(params.EffectivePermissionMode); mode == config.PermModeBypass {
 		return &acp.PermissionResult{Outcome: "allow", OptionID: "allow"}, nil
 	}
 	refuse := &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}

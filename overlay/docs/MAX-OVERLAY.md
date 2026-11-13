@@ -10,7 +10,7 @@ Keep it current: a file added to the overlay, or a reason that changed, belongs 
 
 Two rules make updates cheap, and both are older than this document:
 
-1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 136 of our 186 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
+1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 144 of our 197 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
 2. **A change to somebody else's file is a hook, not a rewrite.** Two lines of registration beat a restructured function: upstream keeps moving those functions, and every line we add there is a line we pay for at the next rebase.
 
 When a change to a shared file turns out to be generic — useful to any gateway, not only to MAX — it belongs upstream as a pull request. A merged pull request removes the file from the overlay for good. That is also the road to Pavel taking the gateway itself.
@@ -46,6 +46,12 @@ out of it, and the second is the interesting one:
   we had written for ourselves. Both compiled into one method name. Ours was removed and every reader
   (`chatMirrorList`, and through it `TurnToChats`, `SayToChats`, `SayJobReport`) now reads upstream's set.
   Textual conflicts announce themselves; a second copy of the same idea does not — `go build` found it.
+
+The rebase onto 1.4.15 changed 237 upstream files between 1.4.5 and 1.4.15, 12 of them ours. It produced
+exactly one conflict, the same `README.md`, resolved the same way — ours by intent. Nothing else had to be
+touched: every hook stayed where it was, in `internal/agent/react.go`, `internal/config/jsondto.go`,
+`internal/config/config.schema.json`, `external/httpserver/server.go` and the three config documents, and
+`go build` with both tag sets, the whole test set and the config schema came out green on the first try.
 
 ### The document seam: two files
 
@@ -103,7 +109,10 @@ Before merging by hand, check whether the schema or the testdata is generated: a
 
 `internal/dryrun/network.go` (+107: `maxProbes()`, `GET /me`, and MAX takes the raw `Authorization` without `Bearer`) · `internal/dryrun/dryrun_test.go` (+61) · `internal/dryrun/dryrun.go` (+1: `probes = append(probes, r.maxProbes()...)`). All three are on Pavel's side too; our blocks are self-contained and re-add cleanly.
 
-### Chat mirrors: five files, all additive
+The two surfaces that build an interface of their own take the same field, or the chat shows an answer without its question: `cmd/coddy/runtime_ipc_http.go` (+8 −1: the window attached to a running service) and `cmd/coddy/desktop_cmd.go` (+6 −1: the window that owns the home). Both carried `Mirror` *and* `AddTurnMirror` at once, the double road removed from `cmd/coddy/serve.go` on 12.11; they now carry `ChatMirrors` instead, and a guard test `cmd/coddy/surface_mirror_test.go` (+79) scans every `httpserver.Options` literal in the package, so a forgotten field fails CI instead of a live window (13.11.2026).
+
+
+### Chat mirrors: seven files, all additive, and one guard
 
 `external/httpserver/bridge.go` (+12 −1) · `external/httpserver/serve.go` (+21) ·
 `external/httpserver/serve_http.go` (+1) · `external/httpserver/server.go` (+13 −1) ·

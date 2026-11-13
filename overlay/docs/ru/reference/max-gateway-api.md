@@ -4,7 +4,7 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 23, типов: 46, функций: 299; с описанием в коде: 324 из 345.
+Файлов: 24, типов: 46, функций: 305; с описанием в коде: 330 из 351.
 
 ## Содержание
 
@@ -20,16 +20,17 @@
 - [external/gateway/max/groups_stub.go](#externalgatewaymaxgroups_stubgo) — типов: 1, функций: 8
 - [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — типов: 1, функций: 13
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — типов: 1, функций: 19
+- [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — типов: 0, функций: 3
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — типов: 1, функций: 6
 - [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 12
 - [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — типов: 12, функций: 9
 - [external/gateway/max/nopreview.go](#externalgatewaymaxnopreviewgo) — типов: 0, функций: 2
 - [external/gateway/max/pictures.go](#externalgatewaymaxpicturesgo) — типов: 1, функций: 2
 - [external/gateway/max/poll.go](#externalgatewaymaxpollgo) — типов: 1, функций: 3
-- [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — типов: 0, функций: 3
+- [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — типов: 0, функций: 5
 - [external/gateway/max/resume.go](#externalgatewaymaxresumego) — типов: 4, функций: 24
 - [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — типов: 4, функций: 40
-- [external/gateway/max/stop.go](#externalgatewaymaxstopgo) — типов: 0, функций: 9
+- [external/gateway/max/stop.go](#externalgatewaymaxstopgo) — типов: 0, функций: 10
 - [external/gateway/max/tooldetails.go](#externalgatewaymaxtooldetailsgo) — типов: 2, функций: 15
 
 ## external/gateway/max/bot.go
@@ -324,6 +325,14 @@
 - `func durationText(seconds int64) string` — durationText writes a length in seconds the way a person reads it.
 - `func humanBytes(n int64) string` — humanBytes writes a size the way a person reads it: 12,3 МБ rather than 12918456 bytes.
 
+## external/gateway/max/lateanswer.go
+
+### Функции
+
+- `func (b *Bot) watchLateAnswer(ctx context.Context, target Target, key, sessionID string)` — watchLateAnswer posts into target whatever the session writes from now on. It runs in the background and never blocks the switch itself.
+- `func (b *Bot) postLateAnswer(ctx context.Context, target Target, text string) bool` — postLateAnswer sends one message of a turn that runs in another window.
+- `func (b *Bot) watchSwitch(ctx context.Context, in inbound, key, sessionID string) string` — watchSwitch starts watching when the switch landed on a conversation that runs a turn this bot did not start. It answers the note the chat gets, or an empty string when there is nothing to watch: our own turn delivers itself and a finished conversation has nothing to wait for.
+
 ## external/gateway/max/media.go
 
 ### Типы
@@ -426,6 +435,8 @@
 - `func (b *Bot) reaskQuestion(ctx context.Context, in inbound, sessionID string)` — reaskQuestion asks this chat a question that is already waiting for an answer elsewhere. It reports nothing: the card is a courtesy of the switch, and a chat that cannot be asked must not fail a switch that otherwise worked.
 - `func reaskText(q session.WaitingQuestion) string` — reaskText is the question as the card shows it: the header and the words of the question, without the options - they are listed under it by listedQuestion.
 - `func (b *Bot) settleReask(c *Client, messageID, text, note string)` — settleReask ends the card: it says how the question ended and loses its keyboard, so no option of it can be pressed again.
+- `func (b *Bot) reaskPermission(ctx context.Context, in inbound, sessionID string)` — reaskPermission asks this chat a permission prompt that is already waiting elsewhere. It reports nothing: the card is a courtesy of the switch, and a chat that cannot be asked must not fail a switch that otherwise worked.
+- `func reaskPermissionText(p session.WaitingPermission) string` — reaskPermissionText is the prompt as the card shows it: what the tool call is going to do, without the options - they are listed under it by listedQuestion.
 
 ## external/gateway/max/resume.go
 
@@ -526,6 +537,7 @@
 - `func countMessages(n int) string` — countMessages spells a number of messages the way the rest of the bot does.
 - `func (b *Bot) registerTurn(key string, cancel context.CancelFunc)` — registerTurn puts the turn of key on record, so /stop can end it from the intake path of another goroutine.
 - `func (b *Bot) unregisterTurn(key string)` — unregisterTurn forgets a turn that ended on its own.
+- `func (b *Bot) turnOurs(key string) bool` — turnOurs reports whether the turn of this chat was started through the gateway. A turn of the same process that is not on record here was started in another window, and its answer has to be fetched into the chat (lateanswer.go).
 - `func (b *Bot) cancelTurn(key string) bool` — cancelTurn ends the turn of key and reports whether there was one to end.
 - `func (b *Bot) dropQueued(key string) int` — dropQueued takes back what waits in the worker queue of this chat. The worker counts every accepted job in inFlight, so a dropped one is released here.
 

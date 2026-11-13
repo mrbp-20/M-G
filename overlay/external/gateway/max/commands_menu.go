@@ -34,9 +34,15 @@ func botCommands() []BotCommand {
 	return []BotCommand{
 		{Name: "start", Description: "Приветствие и краткое знакомство"},
 		{Name: "help", Description: "Список команд и легенда"},
+		{Name: "model", Description: "Сменить модель — только админам"},
 		{Name: "stop", Description: "Остановить текущую работу"},
+		{Name: "agent", Description: "Режим работы: все инструменты — админам"},
+		{Name: "plan", Description: "Режим плана: только чтение и план — админам"},
+		{Name: "ask", Description: "Режим вопросов: ответы без правок — админам"},
 		{Name: "context", Description: "Сколько занято в контексте"},
 		{Name: "goal", Description: "Работать над целью до готовности"},
+		{Name: "resume", Description: "Продолжить другую беседу — только админам"},
+		{Name: "clear", Description: "Начать новую беседу — только админам"},
 	}
 }
 

@@ -256,17 +256,19 @@ func TestBotCommandsMatchGateway(t *testing.T) {
 		}
 	}
 
-	// The short list a person meets first, the same shape Telegram publishes.
+	// The list a person meets when typing "/", the same shape Telegram publishes.
 	// The rest of the settings catalogue (reasoning, think, nothink, toolset and
 	// the aliases) works but stays out of the hints on purpose: adding one there
 	// is a decision, and this row count makes it a spoken one.
 	// /stop joined the list on 25.10 by the operator's decision: stopping a turn
 	// is the one thing a person reaches for while the bot is busy and cannot
-	// wait for it, so it belongs to the short list rather than to the catalogue.
-	// 12.11: настройки и режимы убраны из подсказок по решению оператора - в группе
-	// MAX показывает тот же список, что и в личке, а менять беседу одному за всех
-	// нельзя. Команды работают, helpText их называет; здесь они больше не стоят.
-	core := []string{"start", "help", "stop", "context", "goal"}
+	// wait for it, so it belongs to the list rather than to the catalogue.
+	// 12.11: настройки и режимы были убраны из подсказок - в группе MAX показывает
+	// тот же список, что и в личке. 13.11 оператор вернул полный список: пусть
+	// видят все, а запрещённая команда просто не выполняется и отвечает, что она
+	// админская. Какие из них админские, теперь говорит helpText, и это тоже
+	// проверяется здесь, чтобы меню и справка не разошлись.
+	core := []string{"start", "help", "model", "stop", "agent", "plan", "ask", "context", "goal", "resume", "clear"}
 	for _, name := range core {
 		if !listed[name] {
 			t.Errorf("botCommands is missing %q, which the bot accepts and a person meets first", name)

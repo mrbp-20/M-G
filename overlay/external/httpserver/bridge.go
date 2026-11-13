@@ -441,6 +441,9 @@ func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionReq
 		_ = session.WritePendingPermission(sd, params, toolName, argsJSON)
 	}
 	ch := registerPermissionWait(sid, tcid, sd)
+	// What the wait is about outlives the event: a chat attached after the prompt
+	// went out is asked the same prompt from here.
+	rememberPermission(params)
 	defer unregisterPermissionWait(sid, tcid, sd)
 	if err := s.writeNamedEventJSON("permission", params); err != nil {
 		if _, merr := json.Marshal(params); merr != nil {

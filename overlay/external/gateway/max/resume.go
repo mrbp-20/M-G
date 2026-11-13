@@ -307,6 +307,11 @@ func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionL
 	}
 	if b.turnActive(id) {
 		text += "\n" + b.busyNoteFor(id)
+		// A turn of another window writes into its own surface and never here:
+		// the chat takes its answer from the conversation itself (lateanswer.go).
+		if note := b.watchSwitch(ctx, in, key, id); note != "" {
+			text += "\n" + note
+		}
 	}
 	return text, [][]Button{}
 }
@@ -330,6 +335,9 @@ func (b *Bot) reaskAfterSwitch(ctx context.Context, in inbound, sessionID string
 		return
 	}
 	go b.reaskQuestion(context.WithoutCancel(ctx), in, sessionID)
+	// A permission prompt the session is waiting for is asked the same way: a turn
+	// standing still on an approval the person cannot see is freed by nothing else.
+	go b.reaskPermission(context.WithoutCancel(ctx), in, sessionID)
 }
 
 // resumeMenu is one page of the keyboard with the text above it.
