@@ -4,7 +4,7 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 24, типов: 46, функций: 305; с описанием в коде: 330 из 351.
+Файлов: 24, типов: 46, функций: 306; с описанием в коде: 331 из 352.
 
 ## Содержание
 
@@ -29,7 +29,7 @@
 - [external/gateway/max/poll.go](#externalgatewaymaxpollgo) — типов: 1, функций: 3
 - [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — типов: 0, функций: 5
 - [external/gateway/max/resume.go](#externalgatewaymaxresumego) — типов: 4, функций: 24
-- [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — типов: 4, функций: 40
+- [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — типов: 4, функций: 41
 - [external/gateway/max/stop.go](#externalgatewaymaxstopgo) — типов: 0, функций: 10
 - [external/gateway/max/tooldetails.go](#externalgatewaymaxtooldetailsgo) — типов: 2, функций: 15
 
@@ -496,6 +496,7 @@
 - `func (s *Sender) deliver(ctx context.Context, text string)` — deliver posts one piece of the answer. The pieces go out in order, one after another, so the closing answer reads the way the turn wrote it.
 - `func (s *Sender) refusalOfNonAdmin(token, status string, items []acp.ToolCallResultItem)` — refusalOfNonAdmin says in the journal what a restricted turn was stopped at: the tool, the status the core gave the call and the first line of what came back. Only a turn of somebody who is not the bot's admin is written - a failed call in an ordinary turn is the agent's own business, and a journal nobody can read is worse than none.
 - `func firstLine(text string) string` — firstLine is the first line of a text, cut to what a journal line can hold.
+- `func permissionModeOf(params acp.PermissionRequestParams) string` — permissionModeOf is the mode a permission request was asked under: the mode of the agent that asks (a subagent narrows its own below the session's), else the mode of the session the turn runs in. Both empty means the caller did not say, and the request is a question.
 - `func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionRequestParams) (*acp.PermissionResult, error)` — RequestPermission asks the chat about a tool call of a subagent, with one button per option, and waits for the press. What the chat's own agent asks is allowed without asking: the operator who configured the bot decided that, which is what the mode stamped on the request says.
 - `func (s *Sender) RequestQuestion(ctx context.Context, params acp.QuestionRequestParams) (*acp.QuestionResult, error)` — RequestQuestion posts the question and, when it offers options, waits for one of them to be pressed. A question without options has no form here: it goes out as text and the person answers with their next message, which is why such a question contributes no answer.
 - `func (s *Sender) askOptions(ctx context.Context, text string, options []string) (int, bool)` — askOptions posts text with one button per option and waits for a press. It answers with the place of the pressed option and true, or -1 and false when nobody pressed anything before the turn ended. The message is settled either way: it says how the prompt ended and loses its keyboard, so no button of a finished prompt can be pressed again.

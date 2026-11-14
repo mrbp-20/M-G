@@ -10,7 +10,7 @@ Keep it current: a file added to the overlay, or a reason that changed, belongs 
 
 Two rules make updates cheap, and both are older than this document:
 
-1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 144 of our 197 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
+1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 150 of our 203 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
 2. **A change to somebody else's file is a hook, not a rewrite.** Two lines of registration beat a restructured function: upstream keeps moving those functions, and every line we add there is a line we pay for at the next rebase.
 
 When a change to a shared file turns out to be generic — useful to any gateway, not only to MAX — it belongs upstream as a pull request. A merged pull request removes the file from the overlay for good. That is also the road to Pavel taking the gateway itself.
@@ -52,6 +52,12 @@ exactly one conflict, the same `README.md`, resolved the same way — ours by in
 touched: every hook stayed where it was, in `internal/agent/react.go`, `internal/config/jsondto.go`,
 `internal/config/config.schema.json`, `external/httpserver/server.go` and the three config documents, and
 `go build` with both tag sets, the whole test set and the config schema came out green on the first try.
+
+The rebase onto 1.4.16 was the smaller one: 25 upstream files between 1.4.15 and 1.4.16, two of them ours
+(`AGENTS.md` and `internal/agent/react.go`), and git merged both without a conflict — the hook lifecycle
+Pavel added landed next to our artefact metadata in the same file. The package takes its base hashes from
+the commit this branch sits on, so 1.4.16 is the only tree the layer accepts and 1.4.15 is refused until
+somebody rebases; that is the whole point of the manifest's base column.
 
 ### The document seam: two files
 

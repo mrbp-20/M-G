@@ -337,6 +337,18 @@ func firstLine(text string) string {
 	return shortenRunes(line, 160)
 }
 
+// permissionModeOf is the mode a permission request was asked under: the mode
+// of the agent that asks (a subagent narrows its own below the session's), else
+// the mode of the session the turn runs in. Both empty means the caller did not
+// say, and the request is a question.
+func permissionModeOf(params acp.PermissionRequestParams) string {
+	if m := strings.TrimSpace(params.EffectivePermissionMode); m != "" {
+		return m
+	}
+
+	return strings.TrimSpace(params.SessionPermissionMode)
+}
+
 // RequestPermission asks the chat about a tool call of a subagent, with one
 // button per option, and waits for the press. What the chat's own agent asks is
 // allowed without asking: the operator who configured the bot decided that,
@@ -349,12 +361,29 @@ func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionReq
 
 		return &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}, nil
 	}
-	// Only an explicit "no questions" lets the chat answer for the person. An
-	// empty stamp does not: the caller asks us only after its own check decided
-	// that a person has to answer, so a request without a stamp is a question,
-	// not a permission. Answering it silently gave an approval nobody saw and
-	// left the window waiting for a press that never came (13.11.2026).
-	if mode := strings.TrimSpace(params.EffectivePermissionMode); mode == config.PermModeBypass {
+	// A request says which mode it was asked under in one of two places: the
+	// mode of the agent that asks (a subagent narrows it below its parent's) or
+	// the mode of the session the turn runs in. The core's own gate stamps the
+	// second and leaves the first empty, so reading the first alone made every
+	// request look unstamped and asked the person about work the "no questions"
+	// mode had already allowed (14.11.2026: share_file in a bypass
+	// conversation, which asks in every mode - see the core's default branch).
+	mode := permissionModeOf(params)
+	s.b.log.Debug("max: permission request",
+		"tool", firstLine(permissionText(params)),
+		"mode", mode,
+		"effective", strings.TrimSpace(params.EffectivePermissionMode),
+		"session", strings.TrimSpace(params.SessionPermissionMode),
+		"forced", params.Forced,
+		"options", len(params.Options))
+	// Only "no questions" lets the chat answer for the person, and never a
+	// forced prompt: a hook's ask and a command the safety check did not clear
+	// are for a person in every mode. An empty pair of stamps is not "no
+	// questions" either: the caller asks us only after deciding by itself that a
+	// person has to answer, and answering it silently gave an approval nobody
+	// saw while the window kept waiting for a press that never came
+	// (13.11.2026).
+	if !params.Forced && mode == config.PermModeBypass {
 		return &acp.PermissionResult{Outcome: "allow", OptionID: "allow"}, nil
 	}
 	refuse := &acp.PermissionResult{Outcome: "cancelled", OptionID: "reject"}
