@@ -40,6 +40,13 @@ type Runtime struct {
 	mirrors   map[uint64]session.TurnMirror
 	mirrorSeq uint64
 
+	// chatMirrors are the surfaces that publish a turn started elsewhere into
+	// the chats they own (AddChatMirror): the way back from the browser into a
+	// messenger chat.
+	chatMirrorsMu sync.RWMutex
+	chatMirrors   map[uint64]session.TurnMirror
+	chatMirrorSeq uint64
+
 	// approvers are the surfaces that offered to show a detached subagent's
 	// permission prompt, keyed by the offer so withdrawing one never takes
 	// another with it.
@@ -151,6 +158,37 @@ func (r *Runtime) MirrorTurn(sessionID string, primary acp.UpdateSender) (acp.Up
 }
 
 var _ session.TurnMirror = (*Runtime)(nil)
+
+// AddChatMirror offers a surface that publishes a turn started on some other
+// surface into the chats it owns - a conversation opened in the browser reads
+// the same in a messenger chat - and returns the function that withdraws
+// exactly this offer.
+//
+// An offer rather than a constructor argument for the same reason as
+// SetTurnMirror: the surfaces come up, and are rebuilt under a settings change,
+// in whatever order the configuration lists them.
+func (r *Runtime) AddChatMirror(m session.TurnMirror) (withdraw func()) {
+	if m == nil {
+		return func() {}
+	}
+	r.chatMirrorsMu.Lock()
+	r.chatMirrorSeq++
+	id := r.chatMirrorSeq
+	if r.chatMirrors == nil {
+		r.chatMirrors = make(map[uint64]session.TurnMirror)
+	}
+	r.chatMirrors[id] = m
+	r.chatMirrorsMu.Unlock()
+
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			r.chatMirrorsMu.Lock()
+			delete(r.chatMirrors, id)
+			r.chatMirrorsMu.Unlock()
+		})
+	}
+}
 
 // TurnToChats hands back a sender that publishes a turn this surface started
 // into the chats bound to the session, and the function that ends it. It is the

@@ -1,3 +1,5 @@
+//go:build gateway || gateway.max
+
 package max
 
 import (

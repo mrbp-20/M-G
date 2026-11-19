@@ -243,6 +243,8 @@ func (s *Sender) SendSessionUpdate(sessionID string, update interface{}) error {
 	switch u := update.(type) {
 	case acp.MessageChunkUpdate:
 		return s.forwardTextChunk(u)
+	case acp.AssistantImagesUpdate:
+		return s.writeNamedEventJSON("assistant_images", u)
 	case acp.ToolCallUpdate:
 		return s.writeNamedEventJSON("tool_call", u)
 	case acp.ToolCallStatusUpdate:
@@ -437,14 +439,15 @@ func (s *Sender) RequestPermission(ctx context.Context, params acp.PermissionReq
 	// is answered live or not at all and never becomes the parent's pending
 	// record, which stays reserved for the parent's own gate.
 	relayed := strings.TrimSpace(params.EffectivePermissionMode) != ""
+	ch := registerPermissionWait(sid, tcid, sd)
+	defer unregisterPermissionWait(sid, tcid, sd)
 	if sd != "" && !relayed {
 		_ = session.WritePendingPermission(sd, params, toolName, argsJSON)
 	}
-	ch := registerPermissionWait(sid, tcid, sd)
 	// What the wait is about outlives the event: a chat attached after the prompt
-	// went out is asked the same prompt from here.
+	// went out is asked the same prompt from here. The wait itself is registered
+	// above.
 	rememberPermission(params)
-	defer unregisterPermissionWait(sid, tcid, sd)
 	if err := s.writeNamedEventJSON("permission", params); err != nil {
 		if _, merr := json.Marshal(params); merr != nil {
 			// A marshal failure means the prompt never left the process;
@@ -536,7 +539,10 @@ func (s *Sender) RequestQuestion(ctx context.Context, params acp.QuestionRequest
 		unregisterQuestionWait(sid, rid)
 		s.notifyQuestionPending(sid, false)
 	}()
-	if err := s.writeNamedEventJSON("question", params); err != nil {
+	if err := s.writeNamedEventJSON("question", struct {
+		acp.QuestionRequestParams
+		SupportsError bool `json:"supportsError"`
+	}{params, true}); err != nil {
 		if _, merr := json.Marshal(params); merr != nil {
 			// Same rule as in RequestPermission: only a payload that never
 			// existed as an event aborts the wait.
@@ -555,12 +561,15 @@ func (s *Sender) RequestQuestion(ctx context.Context, params acp.QuestionRequest
 	fromChat := s.askChatsQuestion(askCtx, params)
 	for {
 		select {
-		case res := <-ch:
+		case reply := <-ch:
 			stopAsking(session.ErrAnsweredElsewhere)
-			if res == nil {
+			if reply.err != nil {
+				return nil, reply.err
+			}
+			if reply.result == nil {
 				return &acp.QuestionResult{}, nil
 			}
-			return res, nil
+			return reply.result, nil
 		case res := <-fromChat:
 			fromChat = nil
 			if session.AnsweredQuestion(res) {

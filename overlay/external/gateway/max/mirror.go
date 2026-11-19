@@ -5,7 +5,7 @@ package max
 // The gateway is transparent both ways: what is written in a chat runs in the
 // session the chat is bound to, and a turn somebody starts on another surface -
 // the browser, the console - has to read in that chat too. The bot therefore
-// offers itself to the process (Runtime.AddTurnMirror) as a mirror of the chats
+// offers itself to the process (Runtime.AddChatMirror) as a mirror of the chats
 // it owns: a turn nobody's chat started is published into the chat its session
 // is bound to, and the person's own line is shown there as well.
 

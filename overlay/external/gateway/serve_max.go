@@ -58,9 +58,9 @@ func ServeMax(ctx context.Context, opts Options) error {
 	// read in the chat its session is bound to, so the bot offers itself as a
 	// mirror of the chats it owns while it runs.
 	if rt, ok := opts.Mirror.(interface {
-		AddTurnMirror(session.TurnMirror) func()
+		AddChatMirror(session.TurnMirror) func()
 	}); ok {
-		withdraw := rt.AddTurnMirror(bot)
+		withdraw := rt.AddChatMirror(bot)
 		defer withdraw()
 	}
 	NewHub(logger.Component(opts.Log, logger.ComponentGateway), bot).Start(ctx)

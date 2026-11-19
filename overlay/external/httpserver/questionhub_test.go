@@ -52,7 +52,7 @@ func TestWaitingQuestion_IsKnownWhileItWaits(t *testing.T) {
 		t.Fatal("the answer was refused")
 	}
 	res := <-ch
-	if len(res.Answers) != 1 || len(res.Answers[0]) != 1 || res.Answers[0][0] != "Пока не менять" {
+	if res.err != nil || res.result == nil || len(res.result.Answers) != 1 || len(res.result.Answers[0]) != 1 || res.result.Answers[0][0] != "Пока не менять" {
 		t.Fatalf("the page got %+v, want the label of the chosen option", res)
 	}
 	if _, ok := waitingQuestion("s1"); ok {
@@ -72,7 +72,7 @@ func TestWaitingQuestion_WrittenAnswerIsTaken(t *testing.T) {
 		t.Fatal("the written answer was refused")
 	}
 	res := <-ch
-	if len(res.Answers) != 1 || res.Answers[0][0] != "оставить как есть" {
+	if res.err != nil || res.result == nil || len(res.result.Answers) != 1 || res.result.Answers[0][0] != "оставить как есть" {
 		t.Fatalf("the page got %+v, want the written text", res)
 	}
 }

@@ -59,6 +59,27 @@ Pavel added landed next to our artefact metadata in the same file. The package t
 the commit this branch sits on, so 1.4.16 is the only tree the layer accepts and 1.4.15 is refused until
 somebody rebases; that is the whole point of the manifest's base column.
 
+The rebase onto 1.4.34 was the largest so far: eighteen releases, 519 upstream files between 1.4.16 and
+1.4.34, +35 416/−1 652, and 23 of them ours. Replaying 216 commits produced six conflicts, and only one of
+them was the usual document seam.
+
+| File | What met there | How it was settled |
+|---|---|---|
+| `README.md` | our layer map against Pavel's rewritten README | ours, as every time: the map is ours by intent |
+| `external/httpserver/server.go` | Pavel now declares `promptOpts` above the profile turn, with statistics and image generation; our commit declared its own copy below | our duplicate line dropped, the two chat-mirror calls kept inside Pavel's turn |
+| `external/httpserver/bridge.go` | the question wait's channel now carries a `questionReply{result, err}` instead of `*acp.QuestionResult`; our commit added the branch that asks the chats too | one loop: Pavel's reply shape, our `fromChat` branch beside it |
+| `external/httpserver/questionhub.go` | the same channel change, plus our `questionParams` map, `init()` and the two answer helpers | Pavel's map type kept, our map and helpers added, the chat's answer sent as `questionReply{result: ...}` |
+| `internal/serve/runtime.go` | Pavel introduced his own `AddTurnMirror` — a set of surfaces mirroring a turn between windows — under the name ours already used for the chats | ours renamed `AddChatMirror`; `serve_max.go` and the `max/mirror.go` comment follow the new name, while the three `cmd/coddy` call sites stay on Pavel's method, which is what they always wanted |
+| `external/httpserver/bridge.go` (again) | an old commit of ours registered the permission wait a second time, below the line Pavel now has | the duplicate dropped, only `rememberPermission` kept |
+
+Two more things the rebase itself could not catch, found by the gates rather than by git: our
+`external/gateway/max/sender_blocks_test.go` had lost its build tag, so `go vet` without the gateway tags
+reported `undefined: newSendServer`; and our `questionhub_test.go` still read `.Answers` off the channel,
+which the new reply type does not have. Both were ours, both fixed in place. After that `gofmt` is silent,
+`go vet` is clean with no tags, with `gateway.max` and with the full set, all three builds pass, and the
+tests are green: gateway 98.6 s under `-race`, `external/httpserver` 74.6 s, `internal/agent` 86.4 s,
+`internal/session` 68.1 s, `internal/serve` 2.3 s, `internal/config` 1.6 s.
+
 ### The document seam: two files
 
 | File | Ours | Why |

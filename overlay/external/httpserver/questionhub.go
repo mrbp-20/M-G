@@ -10,6 +10,11 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/internal/session"
 )
 
+type questionReply struct {
+	result *acp.QuestionResult
+	err    error
+}
+
 type questionWaitKey struct {
 	sessionID string
 	requestID string
@@ -17,7 +22,7 @@ type questionWaitKey struct {
 
 var (
 	questionWaitsMu sync.Mutex
-	questionWaits   = make(map[questionWaitKey]chan *acp.QuestionResult)
+	questionWaits   = make(map[questionWaitKey]chan questionReply)
 	// questionParams is what each wait is about: a chat attached after the question
 	// went out is asked again from here, so the shape of the question has to
 	// outlive the event that carried it to the page.
@@ -84,7 +89,7 @@ func answerWaitingQuestion(sessionID string, choice int, text string) bool {
 		if ch == nil {
 			return false
 		}
-		ch <- &acp.QuestionResult{Answers: [][]string{{answer}}}
+		ch <- questionReply{result: &acp.QuestionResult{Answers: [][]string{{answer}}}}
 
 		return true
 	}
@@ -93,11 +98,11 @@ func answerWaitingQuestion(sessionID string, choice int, text string) bool {
 	return false
 }
 
-func registerQuestionWait(sessionID, requestID string) <-chan *acp.QuestionResult {
+func registerQuestionWait(sessionID, requestID string) <-chan questionReply {
 	questionWaitsMu.Lock()
 	defer questionWaitsMu.Unlock()
 	k := questionWaitKey{sessionID: sessionID, requestID: requestID}
-	ch := make(chan *acp.QuestionResult, 1)
+	ch := make(chan questionReply, 1)
 	questionWaits[k] = ch
 	return ch
 }
@@ -135,6 +140,10 @@ func QuestionPending(sessionID string) bool {
 
 // CompleteQuestionAnswer resolves a pending HTTP/streaming question. Returns false if nothing was waiting.
 func CompleteQuestionAnswer(sessionID, requestID string, res *acp.QuestionResult) bool {
+	return completeQuestionReply(sessionID, requestID, questionReply{result: res})
+}
+
+func completeQuestionReply(sessionID, requestID string, reply questionReply) bool {
 	questionWaitsMu.Lock()
 	defer questionWaitsMu.Unlock()
 	k := questionWaitKey{sessionID: sessionID, requestID: requestID}
@@ -143,6 +152,6 @@ func CompleteQuestionAnswer(sessionID, requestID string, res *acp.QuestionResult
 		return false
 	}
 	delete(questionWaits, k)
-	ch <- res
+	ch <- reply
 	return true
 }
