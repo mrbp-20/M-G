@@ -42,7 +42,10 @@ func ServeMax(ctx context.Context, opts Options) error {
 		logger.Component(opts.Log, logger.ComponentGatewayMax),
 		filepath.Join(root, "gateway_max_sessions.json"),
 		filepath.Join(root, "gateway_max_cursor"),
-		opts.Mirror)
+		opts.Mirror).
+		// An answer MAX refuses is parked next to the map and the marker, so a
+		// network blip costs a delay instead of the answer.
+		SetOutboxPath(filepath.Join(root, "gateway_max_outbox.json"))
 	// A switch of the conversation has to show where it landed, and the messages
 	// of a session live in the manager, not in the gateway: the bot is handed a
 	// reader (history.go) rather than the manager itself.

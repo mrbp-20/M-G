@@ -4,7 +4,7 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-24 files, 46 types, 306 functions; 331 of 352 carry a description in the code.
+26 files, 48 types, 316 functions; 343 of 364 carry a description in the code.
 
 ## Contents
 
@@ -14,6 +14,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — 1 types, 22 functions
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — 1 types, 2 functions
 - [external/gateway/max/dedupe.go](#externalgatewaymaxdedupego) — 1 types, 2 functions
+- [external/gateway/max/delivery.go](#externalgatewaymaxdeliverygo) — 0 types, 4 functions
 - [external/gateway/max/dispatch.go](#externalgatewaymaxdispatchgo) — 2 types, 21 functions
 - [external/gateway/max/documents.go](#externalgatewaymaxdocumentsgo) — 1 types, 14 functions
 - [external/gateway/max/groups.go](#externalgatewaymaxgroupsgo) — 1 types, 16 functions
@@ -25,6 +26,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — 1 types, 12 functions
 - [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — 12 types, 9 functions
 - [external/gateway/max/nopreview.go](#externalgatewaymaxnopreviewgo) — 0 types, 2 functions
+- [external/gateway/max/outbox.go](#externalgatewaymaxoutboxgo) — 2 types, 6 functions
 - [external/gateway/max/pictures.go](#externalgatewaymaxpicturesgo) — 1 types, 2 functions
 - [external/gateway/max/poll.go](#externalgatewaymaxpollgo) — 1 types, 3 functions
 - [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — 0 types, 5 functions
@@ -178,6 +180,15 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 
 - `func newDupGuard() *dupGuard` — _no description in the code_
 - `func (g *dupGuard) repeat(target Target, text string) bool` — repeat answers whether this exact text already went to this exact target inside the window, remembering it when it did not.
+
+## external/gateway/max/delivery.go
+
+### Functions
+
+- `func (b *Bot) sendText(ctx context.Context, c *Client, target Target, text string) error` — sendText posts one message, repeating what may well not happen again. A refusal that will stand - a bad token, a chat that no longer exists, a message MAX will not take in any shape - comes back at once: repeating it would only make the person wait twice for the same refusal.
+- `func (b *Bot) park(target Target, text string)` — park keeps an answer MAX never took, so the next connection can send it.
+- `func (b *Bot) flushOutbox(ctx context.Context)` — flushOutbox sends what earlier attempts could not deliver. It runs once the bot has a client, which is the only moment a parked answer has a way out.
+- `func (b *Bot) SetOutboxPath(path string) *Bot` — SetOutboxPath keeps undelivered answers in path, so that a network blip costs a delay instead of the answer. An empty path keeps them in memory only.
 
 ## external/gateway/max/dispatch.go
 
@@ -404,6 +415,22 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 
 - `func quietLinks(text string) string` — quietLinks defuses the host-like words of text so MAX stops attaching preview cards to them, and leaves genuine http(s) links alone.
 - `func defuseHosts(part string) string` — defuseHosts breaks every host-like word of a span that carries no link. A name can hold more than one dot (README.ru.md), and breaking the first one leaves ru.md behind, which MAX reads as a host just as readily, so the pass repeats until nothing host-like is left.
+
+## external/gateway/max/outbox.go
+
+### Types
+
+- `type outboxEntry struct` — outboxEntry is one answer this bot owed a chat and could not deliver.
+- `type outbox struct` — outbox keeps the answers that MAX refused to take. It exists because of 19.11.2026: the platform stopped answering for fifteen seconds, the turn's single POST timed out and the answer died with the socket. The journal said "answer not delivered" while the person saw silence and had to ask whether the answer existed at all. A network blip must cost a delay, not the answer, so an undelivered text is written down here and sent as soon as the bot is connected again. The file is a plain JSON list in Coddy's state directory. A missing or unreadable file is not an error to start with: an empty outbox is exactly what a bot that never lost an answer has.
+
+### Functions
+
+- `func newOutbox(path string) *outbox` — newOutbox loads the parked answers of an earlier run. An empty path keeps the outbox in memory only, which is how a test runs it.
+- `func (o *outbox) add(target Target, text string)` — add parks one answer and writes the file.
+- `func (o *outbox) take() []outboxEntry` — take hands back what is waiting, oldest first.
+- `func (o *outbox) drop(n int)` — drop forgets the first n entries, which are the ones just delivered.
+- `func (o *outbox) length() int` — length is what the journal reports when answers are parked or freed.
+- `func (o *outbox) saveLocked()` — saveLocked writes the file through a temporary one and a rename, so a crash in the middle leaves the previous list rather than half of both.
 
 ## external/gateway/max/pictures.go
 

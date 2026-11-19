@@ -301,8 +301,13 @@ func (s *Sender) deliver(ctx context.Context, text string) {
 
 		return
 	}
-	if _, err := s.c.Send(ctx, Outgoing{Target: s.target, Text: text, Format: "markdown"}); err != nil {
+	// One attempt used to be all an answer got. On 19.11.2026 an answer written
+	// in thirteen seconds died because the platform went quiet for fifteen: the
+	// retry and, if that fails too, the outbox are what turn that into a delay
+	// instead of silence (delivery.go).
+	if err := s.b.sendText(ctx, s.c, s.target, text); err != nil {
 		s.b.log.Warn("max: answer not delivered", "err", err, "target", s.target)
+		s.b.park(s.target, text)
 	}
 }
 

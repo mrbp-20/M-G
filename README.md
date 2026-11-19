@@ -1,6 +1,6 @@
 # MAX gateway for Coddy — an overlay layer
 
-This is not a copy of Coddy: a layer of 183 files adds a gateway for the MAX messenger to Coddy. Coddy
+This is not a copy of Coddy: a layer of 187 files adds a gateway for the MAX messenger to Coddy. Coddy
 itself comes from its own repository —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,
 after which a build with the `gateway.max` tag produces a binary with the gateway.
@@ -9,7 +9,7 @@ after which a build with the `gateway.max` tag produces a binary with the gatewa
 
 | Item | Why |
 |---|---|
-| `overlay/` | 183 files at the same paths as in Coddy: 131 new and 52 replaced |
+| `overlay/` | 187 files at the same paths as in Coddy: 134 new and 53 replaced |
 | `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.4.34 file, sha256 of ours |
 | `apply.sh` | version check, layer application, build (Linux, WSL2) |
 | `apply.ps1`, `apply.cmd` | the same for Windows: PowerShell and a cmd wrapper |
@@ -279,16 +279,16 @@ What it prints on success.
 The compatibility check — four lines, nothing written, exit code 0:
 
 ```
-слой: 184 строк манифеста (с заголовком), база Coddy 1.4.34
+слой: 188 строк манифеста (с заголовком), база Coddy 1.4.34
 клон: C:\coddy-src
-сверка: все 183 файлов слоя совместимы с этим клоном
+сверка: все 187 файлов слоя совместимы с этим клоном
 проверка пройдена (-Check: ничего не изменено)
 ```
 
 Applying the layer adds how many files were replaced:
 
 ```
-наложено файлов: 183
+наложено файлов: 187
 
 дальше:
   .\apply.ps1 -Coddy "C:\coddy-src" -Build   # или собрать вручную:
@@ -308,7 +308,7 @@ returns code 2:
 
 ```
 СЛОЙ НЕ ПОДХОДИТ К ЭТОЙ ВЕРСИИ CODDY
-  изменённых файлов не совпало: 7 из 183, отсутствует: 0
+  изменённых файлов не совпало: 7 из 187, отсутствует: 0
     internal/agent/react.go
     ...
 Нужен Coddy 1.4.34 (коммит c8895911).
@@ -316,8 +316,8 @@ returns code 2:
 ```
 
 The lines are Russian because the installer speaks to the person in Russian; this page is their English
-translation: "layer: 184 manifest rows (with the header), Coddy base 1.4.34", "clone: …", "check: all 183
-files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 183",
+translation: "layer: 188 manifest rows (with the header), Coddy base 1.4.34", "clone: …", "check: all 187
+files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 187",
 "building", "done", and, on a mismatch, "THE LAYER DOES NOT FIT THIS CODDY VERSION".
 
 ## Running it again after an interruption
@@ -329,13 +329,13 @@ command is expected - the installer looks at what is already done and continues:
   version, the work continues in it ("клон уже на месте... продолжаю с ним"); a different version gets
   a clear message and the command to fix it;
 - files already in place and matching the layer are not copied again, so you end up with
-  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 183";
+  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 187";
 - a file damaged after the overlay is restored ("восстановлено после обрыва: N");
 - `--check` / `-Check` on a finished tree answers "слой уже наложен полностью".
 
 ## What apply.sh does
 
-1. **Checks the version.** For each of the 183 layer files it computes sha256 and compares it with the
+1. **Checks the version.** For each of the 187 layer files it computes sha256 and compares it with the
    one recorded in `MANIFEST.tsv` as the Coddy 1.4.34 file. A mismatch means the layer is not applied at
    all: the script prints which files diverged and suggests the version to take.
 2. **Copies** the `overlay/` files into the clone and, after each copy, compares sha256 with ours.

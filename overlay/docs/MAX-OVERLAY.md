@@ -10,7 +10,7 @@ Keep it current: a file added to the overlay, or a reason that changed, belongs 
 
 Two rules make updates cheap, and both are older than this document:
 
-1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 150 of our 203 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
+1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 153 of our 207 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
 2. **A change to somebody else's file is a hook, not a rewrite.** Two lines of registration beat a restructured function: upstream keeps moving those functions, and every line we add there is a line we pay for at the next rebase.
 
 When a change to a shared file turns out to be generic — useful to any gateway, not only to MAX — it belongs upstream as a pull request. A merged pull request removes the file from the overlay for good. That is also the road to Pavel taking the gateway itself.
@@ -32,7 +32,7 @@ so they are counted in the first state and not in the second.
 
 ## Files we share with upstream
 
-50 files: every MAX change that had to land inside a file upstream also owns, does. Overlap is not conflict:
+54 files: every MAX change that had to land inside a file upstream also owns, does. Overlap is not conflict:
 the rebase onto 1.4.2 found the upstream side had changed 687 files between 1.3.80 and 1.4.2, 21 of them
 ours too, and the layer rebased with a single conflict, in `README.md`, which the map below gives to us by
 intent. The lesson stands: what matters is not how many files both sides touched, but whether the same lines meet.

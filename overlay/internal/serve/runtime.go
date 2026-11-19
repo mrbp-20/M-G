@@ -40,13 +40,6 @@ type Runtime struct {
 	mirrors   map[uint64]session.TurnMirror
 	mirrorSeq uint64
 
-	// chatMirrors are the surfaces that publish a turn started elsewhere into
-	// the chats they own (AddChatMirror): the way back from the browser into a
-	// messenger chat.
-	chatMirrorsMu sync.RWMutex
-	chatMirrors   map[uint64]session.TurnMirror
-	chatMirrorSeq uint64
-
 	// approvers are the surfaces that offered to show a detached subagent's
 	// permission prompt, keyed by the offer so withdrawing one never takes
 	// another with it.
@@ -171,23 +164,17 @@ func (r *Runtime) AddChatMirror(m session.TurnMirror) (withdraw func()) {
 	if m == nil {
 		return func() {}
 	}
-	r.chatMirrorsMu.Lock()
-	r.chatMirrorSeq++
-	id := r.chatMirrorSeq
-	if r.chatMirrors == nil {
-		r.chatMirrors = make(map[uint64]session.TurnMirror)
-	}
-	r.chatMirrors[id] = m
-	r.chatMirrorsMu.Unlock()
-
-	var once sync.Once
-	return func() {
-		once.Do(func() {
-			r.chatMirrorsMu.Lock()
-			delete(r.chatMirrors, id)
-			r.chatMirrorsMu.Unlock()
-		})
-	}
+	// One list under two names. A surface of this process offers itself through
+	// AddTurnMirror (the window's server, an adapter of a messenger); the MAX
+	// adapter calls this one. They have to land in the same set.
+	//
+	// They stopped doing so on 19.11.2026: the rename that gave the adapter
+	// this method left it writing into a second map, and TurnToChats and
+	// SayToChats kept reading the first. The bot registered itself where nobody
+	// looked, so every turn started in the browser was answered there and never
+	// reached its chat - while a message typed in the chat itself worked, which
+	// is what made the defect look like a platform problem.
+	return r.AddTurnMirror(m)
 }
 
 // TurnToChats hands back a sender that publishes a turn this surface started

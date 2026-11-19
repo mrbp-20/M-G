@@ -69,6 +69,11 @@ type Bot struct {
 	// the working directory or a temporary one: serve_max.go builds it from
 	// the sessions root. Empty keeps the marker in memory only.
 	cursorPath string
+
+	// outbox keeps the answers MAX did not take (outbox.go): a network blip is
+	// a delay, not a lost reply. nil means nothing is parked, which is how a
+	// test and a bot without a state directory run.
+	outbox *outbox
 	// pollEvery, when set, replaces the configured poll interval; tests poll
 	// faster than the one-second floor of the configuration.
 	pollEvery time.Duration
@@ -318,6 +323,10 @@ func (b *Bot) Start(ctx context.Context) error {
 	b.mu.Unlock()
 	b.setClient(client)
 	defer b.setClient(nil)
+	// Answers MAX refused while the platform was unreachable go out now, before
+	// any new turn takes the poll loop: they are older than whatever comes next,
+	// and the person they were written for has waited long enough.
+	go b.flushOutbox(ctx)
 	// Group entries that cannot be used are named once, after the client exists:
 	// the log carries them for whoever reads it, the admins get a letter for
 	// whoever wrote the file. The gateway keeps running - one bad group must not
