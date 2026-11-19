@@ -92,7 +92,8 @@ persona.
 - I reported "code 0" for a failing case because I piped output through `head`. → Measure exit
   codes without a pipeline between the command and `$?`.
 - A first post-install check landed inside the restart window and read an old pid. → After
-  `--install`, wait ~100 s, then check pid, port, connection and command count.
+  `--install`, wait ~100 s, then check pid, port, connection and command count. Run it once with
+  `MAXGW_INSTALL_DRY=1` first: the plan names the backup it will take and the port it will wait for.
 - A background watcher asked for six hours and expired after one, silently. → An expired task is
   not a success; check state by hand after every expiry.
 

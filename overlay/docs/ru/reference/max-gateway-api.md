@@ -4,7 +4,7 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 26, типов: 48, функций: 316; с описанием в коде: 343 из 364.
+Файлов: 27, типов: 48, функций: 317; с описанием в коде: 344 из 365.
 
 ## Содержание
 
@@ -20,6 +20,7 @@
 - [external/gateway/max/groups.go](#externalgatewaymaxgroupsgo) — типов: 1, функций: 16
 - [external/gateway/max/groups_stub.go](#externalgatewaymaxgroups_stubgo) — типов: 1, функций: 8
 - [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — типов: 1, функций: 13
+- [external/gateway/max/identity.go](#externalgatewaymaxidentitygo) — типов: 0, функций: 1
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — типов: 1, функций: 19
 - [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — типов: 0, функций: 3
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — типов: 1, функций: 6
@@ -307,6 +308,12 @@
 - `func textUnits(text string) int` — textUnits is the length MAX itself measures: a text is refused when its UTF-16 code units pass the platform limit, not when its characters do. Every emoji a line carries (🤖 for the agent, 👤 for the person) lies outside the basic plane and costs two units, so thirty lines measured in runes fit while the same thirty lines measured in units do not - and the card, promised to the reader, was refused as too long.
 - `func clipUnits(text string, budget int) string` — clipUnits cuts text until it fits the budget in the units the platform counts, marking the cut so a reader knows there was more.
 - `func shortenRunes(text string, limit int) string` — shortenRunes cuts text to limit runes, marking the cut so a reader knows there was more.
+
+## external/gateway/max/identity.go
+
+### Функции
+
+- `func (b *Bot) identityNote(in inbound) string` — identityNote is what the agent learns about the person whose message started this turn. Until 19.11.2026 it learned nothing. The platform's user id came in with the update, the access rules rested on it - admins, user groups, the access level of the chat - and the model itself never saw it, so it could not tell the bot's admin from a stranger who found the bot. The second instance of Coddy (Marlen, on the d-coddy box) disclosed a family's names and dates in MAX for exactly that reason: it had no way to know who was asking and could not check. The note rides in the surface system prompt rather than in the message text, so the person's own words stay exactly as written and the agent reads the identity as a fact about the chat instead of something the sender claims.
 
 ## external/gateway/max/incoming.go
 

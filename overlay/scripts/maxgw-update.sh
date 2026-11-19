@@ -9,7 +9,9 @@
 #   --dry       rehearse the rebase in a throwaway worktree; the working tree is untouched
 #   --apply     do the rebase; on a conflict it stops and names the files
 #   --build     gofmt, vet, the release build and the adapter tests
-#   --install   back up the installed binary, install the fresh build, restart detached
+#   --install   back up the installed binary, stop the service, replace it, start it again;
+#               rolls back on its own if the port stays silent. MAXGW_INSTALL_DRY=1 prints
+#               the whole plan and touches nothing.
 #   --version   the version string the next build carries
 #
 # --check and --dry are safe unattended. --apply, --build and --install change the tree or
@@ -195,8 +197,105 @@ cmd_build() {
 	return 0
 }
 
+# install_plan prints the deferred installer: the part that must run after the process
+# replacing itself is gone. It is a separate file with plain arguments, so nothing inside it
+# needs escaping and a person can read exactly what will happen on their machine.
+install_plan() {
+	cat <<'PLAN'
+#!/usr/bin/env bash
+# Written by maxgw-update.sh --install. Arguments: dst src bak stamp port start stdout_log
+set -uo pipefail
+dst=$1; src=$2; bak=$3; stamp=$4; port=$5; start=$6; stdout_log=$7
+log="${MAXGW_LOG:-$HOME/maxgw-update.log}"
+say() { printf '[%s] %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$log"; }
+
+# The service is found by reading /proc, never by pkill -f: that very pattern sits in this
+# shell's own command line, so `pkill -f '<binary> serve'` killed the restarter on 12.11.2026
+# and left the service down with no one to bring it back.
+service_pids() {
+	local p exe
+	for p in /proc/[0-9]*; do
+		[ -r "$p/cmdline" ] || continue
+		exe=$(tr '\0' '\n' <"$p/cmdline" 2>/dev/null | head -1)
+		[ "$exe" = "$dst" ] || continue
+		tr '\0' '\n' <"$p/cmdline" 2>/dev/null | grep -qx 'serve' || continue
+		printf '%s\n' "${p#/proc/}"
+	done
+}
+
+listening() { ss -tln 2>/dev/null | grep -q ":$port "; }
+
+say "=== install of $stamp ==="
+pids=$(service_pids)
+if [ -z "$pids" ]; then
+	say "no running service on $dst: nothing to stop"
+else
+	say "stopping the service: $(echo $pids | tr '\n' ' ')"
+	kill $pids 2>/dev/null
+	alive=1
+	for _ in $(seq 1 40); do
+		alive=0
+		for p in $pids; do kill -0 "$p" 2>/dev/null && alive=1; done
+		[ "$alive" = 0 ] && break
+		sleep 1
+	done
+	if [ "$alive" = 1 ]; then
+		say "FAIL: the service did not stop in 40 s; nothing was replaced"
+		bash "$start" >>"$log" 2>&1
+		exit 1
+	fi
+	say "stopped"
+fi
+
+# A running binary refuses writes (ETXTBSY), so the copy is retried rather than half done.
+ok=0
+for _ in $(seq 1 10); do
+	if cp "$src" "$dst" 2>>"$log"; then ok=1; break; fi
+	sleep 1
+done
+if [ "$ok" = 0 ]; then
+	say "FAIL: cannot write $dst; starting the previous build again"
+	bash "$start" >>"$log" 2>&1
+	exit 1
+fi
+chmod 755 "$dst"
+say "installed $dst ($stamp)"
+
+bash "$start" >>"$log" 2>&1
+say "start script exit: $?"
+
+for _ in $(seq 1 60); do listening && break; sleep 2; done
+if listening; then
+	say "ok: the service answers on port $port"
+	"$dst" --version >>"$log" 2>&1
+	exit 0
+fi
+
+say "FAIL: the service did not come up as $stamp"
+tail -5 "$stdout_log" 2>/dev/null | sed 's/^/    /' >>"$log" 2>&1
+if [ -n "$bak" ]; then
+	say "rolling back to $bak"
+	cp -p "$bak" "$dst" >>"$log" 2>&1
+	chmod 755 "$dst"
+	bash "$start" >>"$log" 2>&1
+	sleep 10
+	if listening; then
+		say "rollback ok: the previous build answers again"
+	else
+		say "rollback FAILED: the service is still down, read the lines above"
+	fi
+fi
+exit 1
+PLAN
+}
+
+# cmd_install puts a fresh build in place without ever writing to a binary that is running.
+# The order is: prove the candidate runs this configuration, back up, then hand a detached
+# shell the job of stopping the service, replacing the file, starting it again and rolling
+# back if the port stays silent. The restart waits 45 s so the answer that asked for the
+# install reaches the surface before its writer goes away.
 cmd_install() {
-	local src="build/$BIN_NAME" dst="$BIN_DIR/$BIN_NAME" stamp bak
+	local src="build/$BIN_NAME" dst="$BIN_DIR/$BIN_NAME" stamp bak port log plan
 	[ -f "$src" ] || die "no $src: run --build first"
 	stamp=$(version_string)
 	if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
@@ -205,47 +304,45 @@ cmd_install() {
 	fi
 	# Nothing on disk changes until the candidate proves it can run this configuration.
 	check_subsystems "$src"
+	bak=""
 	if [ -f "$dst" ]; then
-		bak="$dst.$stamp.bak-$(date +%Y%m%d-%H%M%S)"
+		# The backup is named after the build it holds, not after the one replacing it: a
+		# file called ...max.222.bak that actually contains max.220 is a trap at rollback time.
+		local cur
+		cur=$("$dst" --version 2>/dev/null | head -1 | tr ' ' '-')
+		[ -n "$cur" ] || cur="$stamp"
+		bak="$dst.$cur.bak-$(date +%Y%m%d-%H%M%S)"
+	fi
+	port="${MAXGW_PORT:-12345}"
+	log="$HOME/maxgw-update.log"
+
+	if [ "${MAXGW_INSTALL_DRY:-0}" = 1 ]; then
+		say "dry run: nothing will be stopped, replaced or restarted"
+		say "  build:   $src ($stamp)"
+		say "  install: $dst"
+		say "  backup:  ${bak:-none, nothing is installed yet}"
+		say "  port:    $port, log: $log, start script: $START_SCRIPT"
+		say "the plan, in order:"
+		say "  1. find the service by reading /proc (never pkill -f) and stop it, waiting up to 40 s"
+		say "  2. copy the build over the installed binary, retrying briefly while the file is held"
+		say "  3. start the service with $START_SCRIPT"
+		say "  4. wait up to 120 s for port $port, then print the version now answering"
+		say "  5. if the port stays silent: restore ${bak:-the previous binary}, start it, report"
+		return 0
+	fi
+
+	if [ -n "$bak" ]; then
 		cp -p "$dst" "$bak" || die "cannot back up $dst"
 		say "backed up the installed binary to $bak"
 	fi
-	install -m 0755 "$src" "$dst" || die "cannot install $dst"
-	say "installed $dst ($stamp)"
-	# Coddy runs this script from inside the very process it is replacing, so the restart
-	# cannot happen here: a detached shell waits for this turn to end, stops the service,
-	# starts it again and writes what happened. The wait is long enough for the answer that
-	# asked for the install to reach the surface before its writer goes away.
-	local log="$HOME/maxgw-update.log"
+	plan=$(mktemp "${TMPDIR:-/tmp}/maxgw-install-XXXXXX") || die "cannot create the plan file"
+	install_plan >"$plan" || die "cannot write the plan file"
+	chmod 755 "$plan"
 	say "restarting in 45 s; the log is $log"
-	setsid --fork bash -c "
-		sleep 45
-		echo \"=== \$(date -Is) restart after install of $stamp ===\" >>'$log'
-		# The start script stops the service itself. A pkill here is not only redundant but
-		# harmful: this very shell carries the pattern in its own command line, so
-		# `pkill -f '<binary> serve'` would kill the restarter too (12.11.2026).
-		bash '$START_SCRIPT' >>'$log' 2>&1
-		echo \"restart script exit: \$?\" >>'$log'
-		sleep 5
-		if ss -tln 2>/dev/null | grep -q ':12345'; then
-			echo \"ok: the service answers on port 12345 as $stamp\" >>'$log'
-			'$dst' -v >>'$log' 2>&1
-			exit 0
-		fi
-		echo \"FAIL: the service did not come up as $stamp\" >>'$log'
-		tail -5 '$STDOUT_LOG' 2>/dev/null | sed 's/^/    /' >>'$log' 2>&1
-		if [ -n \"$bak\" ]; then
-			echo \"rolling back to $bak\" >>'$log'
-			cp -p '$bak' '$dst' >>'$log' 2>&1
-			bash '$START_SCRIPT' >>'$log' 2>&1
-			sleep 5
-			if ss -tln 2>/dev/null | grep -q ':12345'; then
-				echo 'rollback ok: the previous build answers again' >>'$log'
-			else
-				echo 'rollback FAILED: the service is still down, read the lines above' >>'$log'
-			fi
-		fi
-	" >/dev/null 2>&1
+	set +u
+	setsid --fork bash -c "sleep 45; bash '$plan' '$dst' '$src' '$bak' '$stamp' '$port' '$START_SCRIPT' '$STDOUT_LOG'; rm -f '$plan'" >/dev/null 2>&1
+	set -u
+	say "install handed to a detached shell; it stops the service, replaces the binary, starts it and rolls back if the port stays silent"
 	return 0
 }
 

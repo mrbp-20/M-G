@@ -4,7 +4,7 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-26 files, 48 types, 316 functions; 343 of 364 carry a description in the code.
+27 files, 48 types, 317 functions; 344 of 365 carry a description in the code.
 
 ## Contents
 
@@ -20,6 +20,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/groups.go](#externalgatewaymaxgroupsgo) — 1 types, 16 functions
 - [external/gateway/max/groups_stub.go](#externalgatewaymaxgroups_stubgo) — 1 types, 8 functions
 - [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — 1 types, 13 functions
+- [external/gateway/max/identity.go](#externalgatewaymaxidentitygo) — 0 types, 1 functions
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — 1 types, 19 functions
 - [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — 0 types, 3 functions
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — 1 types, 6 functions
@@ -307,6 +308,12 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func textUnits(text string) int` — textUnits is the length MAX itself measures: a text is refused when its UTF-16 code units pass the platform limit, not when its characters do. Every emoji a line carries (🤖 for the agent, 👤 for the person) lies outside the basic plane and costs two units, so thirty lines measured in runes fit while the same thirty lines measured in units do not - and the card, promised to the reader, was refused as too long.
 - `func clipUnits(text string, budget int) string` — clipUnits cuts text until it fits the budget in the units the platform counts, marking the cut so a reader knows there was more.
 - `func shortenRunes(text string, limit int) string` — shortenRunes cuts text to limit runes, marking the cut so a reader knows there was more.
+
+## external/gateway/max/identity.go
+
+### Functions
+
+- `func (b *Bot) identityNote(in inbound) string` — identityNote is what the agent learns about the person whose message started this turn. Until 19.11.2026 it learned nothing. The platform's user id came in with the update, the access rules rested on it - admins, user groups, the access level of the chat - and the model itself never saw it, so it could not tell the bot's admin from a stranger who found the bot. The second instance of Coddy (Marlen, on the d-coddy box) disclosed a family's names and dates in MAX for exactly that reason: it had no way to know who was asking and could not check. The note rides in the surface system prompt rather than in the message text, so the person's own words stay exactly as written and the agent reads the identity as a fact about the chat instead of something the sender claims.
 
 ## external/gateway/max/incoming.go
 

@@ -51,6 +51,8 @@ gateways:
 
 Access and isolation read exactly like the Telegram ones ([Access levels](gateway.md#access-levels), [Session isolation modes](gateway.md#session-isolation-modes)): `default_access` decides who may talk to the bot, `default_isolation` whether a group chat has one session per person, one for everyone, or one for the admins only, and `chats[]` overrides both per chat. A direct chat (a `dialog` in MAX) always has a session of its own.
 
+**The agent knows who writes to it.** Every turn carries one more line in the surface prompt: the card's name, the MAX identifier, whether that person is the bot's admin, the kind of chat and its `chat id`. These come from the platform with the message and cannot be forged in its text. The gateway always held access decisions on them while the model saw none, so it could not tell an admin from a stranger who found the bot. The same line carries the rule: personal facts about a person and their family are discussed in the bot admin's chats only, and elsewhere the answer is that this is private and the bot's owner must be asked.
+
 The same keys are on the **Gateways** tab of the web settings, and a token or any other key changed there rebuilds the MAX bot in place, leaving a Telegram bot in the same process running. The field reference is in [config.md](../reference/config.md).
 
 ## Running it

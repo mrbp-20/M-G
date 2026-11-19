@@ -41,10 +41,14 @@ type inbound struct {
 	chatID  int64
 	userID  int64
 	isGroup bool
-	text    string
-	command string
-	args    string
-	images  []ImageAttachment
+	// userName is the card name the platform sent with the message. The agent
+	// is told who writes (identity.go): a name and an id it can trust, instead
+	// of guessing from the text and disclosing what it should not.
+	userName string
+	text     string
+	command  string
+	args     string
+	images   []ImageAttachment
 	// files are the attachments that are not pictures: documents, recordings
 	// and videos. They are saved to the conversation's Max-in folder, so the
 	// agent works with the file itself (incoming.go).
@@ -168,7 +172,8 @@ func (b *Bot) handleMessage(ctx context.Context, u Update) error {
 		b.log.Debug("max: update has malformed attachments", "err", fileErr,
 			"user", userID, "chat", chatID)
 	}
-	in := inbound{chatID: chatID, userID: userID, isGroup: isGroup, text: text, images: images, files: files, parts: 1}
+	in := inbound{chatID: chatID, userID: userID, isGroup: isGroup, userName: sender.DisplayName(),
+		text: text, images: images, files: files, parts: 1}
 	in.command, in.args = parseCommand(text)
 	if in.command != "" && !knownCommand(in.command) {
 		// A slash-word we do not know is somebody else's command, and silence is
@@ -558,7 +563,7 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 	}
 	opts := &session.PromptRunOpts{
 		SkipUsagePublish:    true,
-		SurfaceSystemPrompt: surfaceSystemPrompt(),
+		SurfaceSystemPrompt: surfaceSystemPrompt() + b.identityNote(in),
 		Restriction:         restriction,
 	}
 	result, err := b.runTurn(tctx, params, mirrored, opts, func() {
