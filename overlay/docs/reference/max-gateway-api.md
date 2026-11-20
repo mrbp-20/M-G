@@ -4,7 +4,7 @@ Generated from the code itself by `scripts/gen-max-api-reference.py`: every type
 
 Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch.go` (what happens to an incoming message), `sender.go` (what the chat sees), then `documents.go` and `pictures.go` (files and pictures), `incoming.go` (files the person sends), `client.go` (the API), and `model.go` (the wire types).
 
-28 files, 50 types, 331 functions; 353 of 381 carry a description in the code.
+28 files, 50 types, 334 functions; 356 of 384 carry a description in the code.
 
 ## Contents
 
@@ -25,7 +25,7 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — 1 types, 19 functions
 - [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — 0 types, 1 functions
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — 1 types, 6 functions
-- [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — 1 types, 12 functions
+- [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — 1 types, 15 functions
 - [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — 12 types, 9 functions
 - [external/gateway/max/nopreview.go](#externalgatewaymaxnopreviewgo) — 0 types, 2 functions
 - [external/gateway/max/outbox.go](#externalgatewaymaxoutboxgo) — 2 types, 6 functions
@@ -404,6 +404,9 @@ Reading order for a newcomer: `bot.go` (the adapter and its settings), `dispatch
 - `func reportKey(admin int64) string` — reportKey is the binding key of an administrator's private chat: the same one a message typed there is filed under, so a report follows the conversation rather than a number kept beside the job.
 - `func (b *Bot) SayJobReport(description string, at time.Time, text string) bool` — SayJobReport shows a scheduled job's report in the conversation of an administrator, headed as the job's own message rather than as a line of the dialogue it lands in. It refuses to invent a conversation: a gateway whose administrator has never written reports that it has nowhere to report, and the caller keeps the text in the job's own session instead of dropping it.
 - `func (b *Bot) MirrorTurn(sessionID string, primary acp.UpdateSender) (acp.UpdateSender, func())` — MirrorTurn publishes a turn this bot did not start into the chat its session is bound to, and hands the turn back untouched when the chat owns it already: a message typed in MAX is answered there by the turn itself.
+- `func (b *Bot) rememberChatID(key string, chatID int64)` — rememberChatID records the MAX chat id a store key is written in, learned from an inbound message.
+- `func (b *Bot) chatIDOf(key string) int64` — chatIDOf answers the chat id last seen for a store key, zero when this bot has not seen that chat write since it started.
+- `func (b *Bot) mirroredTyping(sessionID string) func()` — mirroredTyping shows the "typing…" hint in the chat while a turn started elsewhere runs, and stops it when the turn is over. The hint travels to a chat id, and a private conversation's key carries the person instead: the id comes from the last message that chat sent, which is why a conversation nobody has written in since the start shows no hint rather than guessing one.
 - `func (b *Bot) Say(sessionID, text string)` — Say shows in the bound chat a line written on another surface, so a conversation opened in the browser reads in MAX as it does there.
 - `func (b *Bot) chatSender(sessionID string) (*Sender, func())` — chatSender builds the sender of the chat the session is bound to, with nil when this bot serves no such chat or is not connected right now.
 - `func (b *Bot) boundChat(sessionID string) (Target, bool)` — boundChat is the chat a session is bound to, read from the map of the chats this bot serves: a direct chat is keyed by its person, a group by its chat.

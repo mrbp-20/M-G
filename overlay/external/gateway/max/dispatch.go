@@ -188,6 +188,10 @@ func (b *Bot) handleMessage(ctx context.Context, u Update) error {
 
 	isolation := access.EffectiveIsolation(chatID, b.cfg)
 	key := sessionstore.SessionKey(adapterName, chatID, userID, isolation, isGroup)
+	// The chat id a key is written in, kept for the "typing…" hint of a turn
+	// started on another surface (mirror.go): that hint travels to a chat id,
+	// which a private conversation's key does not carry.
+	b.rememberChatID(key, chatID)
 	// A prompt that asked for a written answer takes the next text of this chat:
 	// the person pressed "Свой ответ" and the card says so. A command is never an
 	// answer - it runs as itself and the wait ends - and a message that carries no

@@ -484,3 +484,47 @@ func TestMirrorTurn_AsksAPermissionOnBothSurfaces(t *testing.T) {
 		t.Fatalf("the page prompt ended with %v, want it withdrawn as answered elsewhere", cause)
 	}
 }
+
+// TestMirrorTurn_ShowsTypingForATurnOfAnotherSurface: a person who writes in the
+// browser must see the same "typing…" hint as one who writes in MAX, otherwise
+// the chat is silent from the question to the answer (20.11.2026).
+func TestMirrorTurn_ShowsTypingForATurnOfAnotherSurface(t *testing.T) {
+	rec := newActionRecorder(t)
+	b := newTestBot(newStubRunner())
+	b.setClient(NewClient("t", WithHTTPClient(rec.srv.Client()), WithBaseURL(rec.srv.URL)))
+	b.store.Bind("max:user:7", "sess-1")
+	b.rememberChatID("max:user:7", 485448400)
+
+	_, release := b.MirrorTurn("sess-1", &recordSender{})
+	time.Sleep(80 * time.Millisecond)
+	actions, paths := rec.seen()
+	release()
+
+	found := false
+	for i, action := range actions {
+		if action == ActionTyping && strings.HasSuffix(paths[i], "/chats/485448400/actions") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("a turn of another surface showed no typing hint: actions %v, paths %v", actions, paths)
+	}
+}
+
+// TestMirrorTurn_NoTypingWithoutAKnownChat: the hint travels to a chat id, and a
+// conversation nobody has written in since the start has none. Guessing one is
+// worse than silence.
+func TestMirrorTurn_NoTypingWithoutAKnownChat(t *testing.T) {
+	rec := newActionRecorder(t)
+	b := newTestBot(newStubRunner())
+	b.setClient(NewClient("t", WithHTTPClient(rec.srv.Client()), WithBaseURL(rec.srv.URL)))
+	b.store.Bind("max:user:7", "sess-1")
+
+	_, release := b.MirrorTurn("sess-1", &recordSender{})
+	time.Sleep(80 * time.Millisecond)
+	release()
+
+	if actions, _ := rec.seen(); len(actions) != 0 {
+		t.Fatalf("a hint was posted for a chat this bot has never seen: %v", actions)
+	}
+}

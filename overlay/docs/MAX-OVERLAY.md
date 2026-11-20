@@ -151,6 +151,12 @@ in a file **without a build tag** (a tagged declaration broke the stub build), a
 forwards to the mirror on both paths that start a turn. All five are on Pavel's side
 too; our blocks are self-contained and re-add cleanly.
 
+The round of 20.11.2026 lives in `external/gateway/max`: `mirror.go` gained
+`mirroredTyping`, so the "typing…" hint is posted for a turn started on another
+surface too — the chat id it needs is learned from inbound messages (`chatIDs`),
+and `Say` marks what it delivered so the conversation watcher (`chatwatch.go`)
+does not repeat the same line.
+
 ### Documents: nine files
 
 `README.md` (+108 −106) is our fork's own front page: **ours by intent — take our side on a conflict**, and read their diff only for structural changes (`git diff <base>..upstream/main -- README.md`). Today that cost two of Pavel's paragraphs (Homebrew, a Metrics row); a fork's README is not the place to track them.

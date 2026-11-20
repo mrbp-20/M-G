@@ -4,7 +4,7 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 28, типов: 50, функций: 331; с описанием в коде: 353 из 381.
+Файлов: 28, типов: 50, функций: 334; с описанием в коде: 356 из 384.
 
 ## Содержание
 
@@ -25,7 +25,7 @@
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — типов: 1, функций: 19
 - [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — типов: 0, функций: 1
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — типов: 1, функций: 6
-- [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 12
+- [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 15
 - [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — типов: 12, функций: 9
 - [external/gateway/max/nopreview.go](#externalgatewaymaxnopreviewgo) — типов: 0, функций: 2
 - [external/gateway/max/outbox.go](#externalgatewaymaxoutboxgo) — типов: 2, функций: 6
@@ -404,6 +404,9 @@
 - `func reportKey(admin int64) string` — reportKey is the binding key of an administrator's private chat: the same one a message typed there is filed under, so a report follows the conversation rather than a number kept beside the job.
 - `func (b *Bot) SayJobReport(description string, at time.Time, text string) bool` — SayJobReport shows a scheduled job's report in the conversation of an administrator, headed as the job's own message rather than as a line of the dialogue it lands in. It refuses to invent a conversation: a gateway whose administrator has never written reports that it has nowhere to report, and the caller keeps the text in the job's own session instead of dropping it.
 - `func (b *Bot) MirrorTurn(sessionID string, primary acp.UpdateSender) (acp.UpdateSender, func())` — MirrorTurn publishes a turn this bot did not start into the chat its session is bound to, and hands the turn back untouched when the chat owns it already: a message typed in MAX is answered there by the turn itself.
+- `func (b *Bot) rememberChatID(key string, chatID int64)` — rememberChatID records the MAX chat id a store key is written in, learned from an inbound message.
+- `func (b *Bot) chatIDOf(key string) int64` — chatIDOf answers the chat id last seen for a store key, zero when this bot has not seen that chat write since it started.
+- `func (b *Bot) mirroredTyping(sessionID string) func()` — mirroredTyping shows the "typing…" hint in the chat while a turn started elsewhere runs, and stops it when the turn is over. The hint travels to a chat id, and a private conversation's key carries the person instead: the id comes from the last message that chat sent, which is why a conversation nobody has written in since the start shows no hint rather than guessing one.
 - `func (b *Bot) Say(sessionID, text string)` — Say shows in the bound chat a line written on another surface, so a conversation opened in the browser reads in MAX as it does there.
 - `func (b *Bot) chatSender(sessionID string) (*Sender, func())` — chatSender builds the sender of the chat the session is bound to, with nil when this bot serves no such chat or is not connected right now.
 - `func (b *Bot) boundChat(sessionID string) (Target, bool)` — boundChat is the chat a session is bound to, read from the map of the chats this bot serves: a direct chat is keyed by its person, a group by its chat.

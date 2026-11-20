@@ -99,11 +99,62 @@ func (b *Bot) MirrorTurn(sessionID string, primary acp.UpdateSender) (acp.Update
 	if chat == nil {
 		return primary, func() {}
 	}
+	// "typing…" for a turn this bot did not start: a person who writes in the
+	// browser must see the same hint as one who writes in MAX, otherwise the chat
+	// is silent from the question to the answer (20.11.2026).
+	stopTyping := b.mirroredTyping(sessionID)
+	stop := func() {
+		stopTyping()
+		release()
+	}
 	if primary == nil {
-		return chat, release
+		return chat, stop
 	}
 
-	return &mirroredTurn{primary: primary, chat: chat}, release
+	return &mirroredTurn{primary: primary, chat: chat}, stop
+}
+
+// rememberChatID records the MAX chat id a store key is written in, learned from
+// an inbound message.
+func (b *Bot) rememberChatID(key string, chatID int64) {
+	if key == "" || chatID == 0 {
+		return
+	}
+	b.chatIDsMu.Lock()
+	defer b.chatIDsMu.Unlock()
+	if b.chatIDs == nil {
+		b.chatIDs = make(map[string]int64)
+	}
+	b.chatIDs[key] = chatID
+}
+
+// chatIDOf answers the chat id last seen for a store key, zero when this bot has
+// not seen that chat write since it started.
+func (b *Bot) chatIDOf(key string) int64 {
+	b.chatIDsMu.Lock()
+	defer b.chatIDsMu.Unlock()
+
+	return b.chatIDs[key]
+}
+
+// mirroredTyping shows the "typing…" hint in the chat while a turn started
+// elsewhere runs, and stops it when the turn is over.
+//
+// The hint travels to a chat id, and a private conversation's key carries the
+// person instead: the id comes from the last message that chat sent, which is why
+// a conversation nobody has written in since the start shows no hint rather than
+// guessing one.
+func (b *Bot) mirroredTyping(sessionID string) func() {
+	key, ok := b.store.KeyFor(sessionID)
+	if !ok {
+		return func() {}
+	}
+	chatID := b.chatIDOf(key)
+	if chatID == 0 {
+		return func() {}
+	}
+
+	return b.typingKeepAlive(b.watchContext(), chatID)
 }
 
 // Say shows in the bound chat a line written on another surface, so a

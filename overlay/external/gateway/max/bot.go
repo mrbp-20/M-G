@@ -74,6 +74,12 @@ type Bot struct {
 	// already delivered, so the watcher never repeats the block the transcript
 	// keeps for them (chatwatch.go).
 	turnEnd *turnMarks
+	// chatIDs is the MAX chat id each store key is written in, learned from
+	// inbound messages: the "typing…" hint of a turn started on another surface
+	// is posted to a chat id, and a private conversation's key carries the person
+	// rather than the chat (mirror.go).
+	chatIDsMu sync.Mutex
+	chatIDs   map[string]int64
 
 	// groups is the group policy of this build: a build with gateway.max.groups
 	// admits a group only when the configuration names it with a path and an
