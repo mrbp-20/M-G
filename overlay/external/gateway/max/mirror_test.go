@@ -13,6 +13,7 @@ import (
 	"github.com/EvilFreelancer/coddy-agent/external/gateway/sessionstore"
 	"github.com/EvilFreelancer/coddy-agent/internal/acp"
 	"github.com/EvilFreelancer/coddy-agent/internal/config"
+	"github.com/EvilFreelancer/coddy-agent/internal/llm"
 	"github.com/EvilFreelancer/coddy-agent/internal/session"
 )
 
@@ -154,6 +155,41 @@ func TestSay_ShowsTheLineInTheChat(t *testing.T) {
 	}
 	if got := sent[0].body.Text; !strings.HasPrefix(got, "🌐 проверка из веба") {
 		t.Fatalf("message = %q, want the line marked as written elsewhere", got)
+	}
+}
+
+// TestSay_LeavesTheWatcherNothingToSend: a line the mirror delivered is in the
+// conversation too, so the watcher that reads the conversation would send it
+// again. On 20.11.2026 every turn started in the browser reached the chat twice
+// that way.
+func TestSay_LeavesTheWatcherNothingToSend(t *testing.T) {
+	f := newSendServer(t)
+	b := newTestBot(newStubRunner())
+	b.setClient(f.client(t))
+	b.store.Bind("max:user:7", "sess-1")
+
+	b.Say("sess-1", "строка из браузера")
+	if !b.selfPosted.has("sess-1", "строка из браузера") {
+		t.Fatal("the mirror did not remember what it delivered, so the watcher will repeat it")
+	}
+
+	// The same line appearing in the conversation is not a second answer.
+	conv := &tail{}
+	conv.add(llm.RoleAssistant, "строка из браузера")
+	b.transcript = conv.read
+	b.watchPause = 5 * time.Millisecond
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	b.armWatcher(ctx, "sess-1")
+	time.Sleep(60 * time.Millisecond)
+
+	for _, sent := range f.sends() {
+		if strings.Count(sent.body.Text, "строка из браузера") > 1 {
+			t.Fatalf("the mirror line arrived twice: %q", sent.body.Text)
+		}
+	}
+	if n := len(f.sends()); n != 1 {
+		t.Fatalf("the chat got %d messages for one line written in the browser", n)
 	}
 }
 

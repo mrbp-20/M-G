@@ -4,12 +4,13 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 27, типов: 48, функций: 317; с описанием в коде: 344 из 365.
+Файлов: 28, типов: 50, функций: 331; с описанием в коде: 353 из 381.
 
 ## Содержание
 
-- [external/gateway/max/bot.go](#externalgatewaymaxbotgo) — типов: 3, функций: 16
+- [external/gateway/max/bot.go](#externalgatewaymaxbotgo) — типов: 3, функций: 17
 - [external/gateway/max/burst.go](#externalgatewaymaxburstgo) — типов: 2, функций: 6
+- [external/gateway/max/chatwatch.go](#externalgatewaymaxchatwatchgo) — типов: 2, функций: 15
 - [external/gateway/max/client.go](#externalgatewaymaxclientgo) — типов: 5, функций: 35
 - [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — типов: 1, функций: 22
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — типов: 1, функций: 2
@@ -22,7 +23,7 @@
 - [external/gateway/max/history.go](#externalgatewaymaxhistorygo) — типов: 1, функций: 13
 - [external/gateway/max/identity.go](#externalgatewaymaxidentitygo) — типов: 0, функций: 1
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — типов: 1, функций: 19
-- [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — типов: 0, функций: 3
+- [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — типов: 0, функций: 1
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — типов: 1, функций: 6
 - [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 12
 - [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — типов: 12, функций: 9
@@ -59,6 +60,7 @@
 - `func (b *Bot) connectedClient() *Client` — connectedClient is the client of a running bot, nil when stopped.
 - `func (b *Bot) bursts() *burstBuffer` — bursts is the buffer of open message bursts, built on first use (burst.go).
 - `func (b *Bot) turnContext(ctx context.Context) context.Context` — turnContext is the context turns run under: the start's context without its cancellation, so a stop ends intake before it ends generation.
+- `func (b *Bot) watchContext() context.Context` — watchContext is the context the conversation watchers live in (chatwatch.go). A bot that never started - a test, mostly - has none, and a background context is the fair stand-in there.
 - `func (b *Bot) drain()` — _no description in the code_
 - `func withRootCA(hc *http.Client, path string) (*http.Client, error)` — withRootCA returns a client that trusts the certificates of the PEM bundle at path in addition to the system store - a national root is an addition to it, not a replacement. The client given is copied, never modified in place: BuildHTTPClient answers "inherit" with http.DefaultClient itself, and a gateway setting must not reach every other request of the process.
 - `func withFiniteTimeout(hc *http.Client, atLeast time.Duration) *http.Client` — withFiniteTimeout returns a client that gives up on a dead connection of its own accord. The client is copied, never changed in place: proxyutil may hand back http.DefaultClient, and a deadline written into that one would reach every other part of the program. A deadline the caller already set is kept when it is shorter than the one asked for here.
@@ -78,6 +80,31 @@
 - `func (bb *burstBuffer) flushKey(key string)` — flushKey delivers what a chat still holds, for a command that must not wait behind the burst it interrupts.
 - `func (bb *burstBuffer) flushAll()` — flushAll delivers every held burst: what is held here is already past the cursor, so a stop that dropped it would lose the message for good.
 - `func mergeInbound(a, b inbound) inbound` — mergeInbound folds the next message of a burst into the one before it: the texts follow each other and the pictures add up.
+
+## external/gateway/max/chatwatch.go
+
+### Типы
+
+- `type postedTexts struct` — postedTexts remembers what this bot delivered on its own, so the watcher does not post the same answer a second time. The window is ten minutes rather than the three seconds of dupGuard: the watcher reads the conversation on a two second beat and the turn that wrote the answer may already be over.
+- `type turnMarks struct` — turnMarks remembers how far into a conversation this bot has already posted on its own. The transcript keeps a turn's assistant text as one message, so a turn that wrote four short lines sits there as a single block. Comparing texts does not catch that: the block is not equal to any line that was sent. Without the mark the watcher repeated the whole block as one long message right after the chat had received the same words one by one (20.11.2026, 895 characters at 15:34).
+
+### Функции
+
+- `func newPostedTexts() *postedTexts` — _no description in the code_
+- `func postedKey(sessionID, text string) string` — _no description in the code_
+- `func (p *postedTexts) mark(sessionID, text string)` — _no description in the code_
+- `func (p *postedTexts) has(sessionID, text string) bool` — _no description in the code_
+- `func newTurnMarks() *turnMarks` — _no description in the code_
+- `func (t *turnMarks) remember(sessionID string, at int)` — _no description in the code_
+- `func (t *turnMarks) floor(sessionID string) int` — _no description in the code_
+- `func (b *Bot) markTurnEnd(sessionID string)` — markTurnEnd records that everything the conversation holds right now was delivered by this bot's own turn. Called where the turn ends (dispatch.go), so the watcher afterwards only sees what appeared later - the answer of a turn no chat started.
+- `func (b *Bot) armWatchers(ctx context.Context)` — armWatchers starts a watcher for every conversation a chat holds. It runs once at Start, so a bot that restarts keeps watching the conversations people are bound to instead of waiting for them to write again.
+- `func (b *Bot) armWatcher(ctx context.Context, sessionID string)` — armWatcher starts watching one conversation, once. The watcher lives as long as the bot unless nobody holds the conversation any more.
+- `func (b *Bot) disarmWatcher(sessionID string)` — disarmWatcher stops watching a conversation nobody holds any more.
+- `func (b *Bot) watchSession(ctx context.Context, sessionID string, seen int, settled bool)` — watchSession posts into the chats everything the conversation gains that this bot did not write.
+- `func (b *Bot) anyOurs(keys []string) bool` — anyOurs reports whether one of the chats holding the conversation runs a turn this bot started.
+- `func (b *Bot) postToChats(ctx context.Context, sessionID string, keys []string, text string)` — postToChats delivers one answer of a background turn into every chat that holds the conversation at this moment.
+- `func targetOfKey(key string) (Target, bool)` — targetOfKey turns a chat key back into the address MAX understands. A private conversation is keyed by the person (sessionstore.SessionKey) and MAX writes to a person by user_id; a group is keyed by the chat and written by chat_id.
 
 ## external/gateway/max/client.go
 
@@ -291,7 +318,7 @@
 
 ### Типы
 
-- `type transcriptReader func(sessionID string) []llm.Message` — transcriptReader hands the bot the messages of a session it did not author. The gateway adapter never opens the session store itself: the process wires this at startup, so a bot built in a test has no reader and posts no card.
+- `type transcriptReader func(sessionID string) (msgs []llm.Message, known bool)` — transcriptReader hands the bot the messages of a session it did not author, and says whether it knows that session at all. The second answer is not decoration: a conversation Coddy has not loaded yet returns no messages, and that is indistinguishable from an empty one unless the reader says which it is. The gateway adapter never opens the session store itself: the process wires this at startup, so a bot built in a test has no reader and posts no card.
 
 ### Функции
 
@@ -347,9 +374,7 @@
 
 ### Функции
 
-- `func (b *Bot) watchLateAnswer(ctx context.Context, target Target, key, sessionID string)` — watchLateAnswer posts into target whatever the session writes from now on. It runs in the background and never blocks the switch itself.
-- `func (b *Bot) postLateAnswer(ctx context.Context, target Target, text string) bool` — postLateAnswer sends one message of a turn that runs in another window.
-- `func (b *Bot) watchSwitch(ctx context.Context, in inbound, key, sessionID string) string` — watchSwitch starts watching when the switch landed on a conversation that runs a turn this bot did not start. It answers the note the chat gets, or an empty string when there is nothing to watch: our own turn delivers itself and a finished conversation has nothing to wait for.
+- `func (b *Bot) watchSwitch(ctx context.Context, in inbound, key, sessionID string) string` — watchSwitch answers the note a chat gets when the switch landed on a conversation that runs a turn this bot did not start, and makes sure that conversation is watched. It reports an empty string when there is nothing to promise: our own turn delivers itself and a finished conversation has nothing to wait for.
 
 ## external/gateway/max/media.go
 

@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -181,25 +182,40 @@ func (s *Store) SetMenuButton(bot int64, url, before string) {
 	}
 }
 
-// KeyFor returns the key that maps to sessionID. A background subagent asks
-// about its parent session, not about a chat, and this is how the bot finds the
-// conversation that session belongs to - after a restart too, since the map is
-// persisted.
-func (s *Store) KeyFor(sessionID string) (string, bool) {
+// KeysFor returns every chat key mapped to sessionID, sorted so that whoever
+// reports or delivers to them gets a stable order.
+//
+// A conversation normally belongs to one chat. More than one key means somebody
+// deliberately opened the same conversation in a second chat with /resume - a
+// state that should not arise by itself, and one the caller is expected to name
+// in its log rather than silently pick a winner from.
+func (s *Store) KeysFor(sessionID string) []string {
 	if sessionID == "" {
-		return "", false
+		return nil
 	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	var keys []string
 	for key, id := range s.data {
-		if reservedKey(key) {
+		if reservedKey(key) || id != sessionID {
 			continue
 		}
-		if id == sessionID {
-			return key, true
-		}
+		keys = append(keys, key)
 	}
-	return "", false
+	sort.Strings(keys)
+	return keys
+}
+
+// KeyFor returns one key that maps to sessionID. A background subagent asks
+// about its parent session, not about a chat, and this is how the bot finds the
+// conversation that session belongs to - after a restart too, since the map is
+// persisted. KeysFor answers the whole set when the caller must not pick one.
+func (s *Store) KeyFor(sessionID string) (string, bool) {
+	keys := s.KeysFor(sessionID)
+	if len(keys) == 0 {
+		return "", false
+	}
+	return keys[0], true
 }
 
 // ChatID returns the chat a session key addresses. A private conversation is

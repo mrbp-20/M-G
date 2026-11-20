@@ -66,6 +66,59 @@ func TestKeyForFindsTheChatOfASession(t *testing.T) {
 	}
 }
 
+// A conversation belongs to one chat, but /resume can open the same one in a
+// second chat. Whoever delivers an answer must see both, not the first one the
+// map happened to yield.
+func TestKeysForReturnsEveryChatOfASession(t *testing.T) {
+	s := sessionstore.New()
+	shared := "sess_shared"
+	personal := sessionstore.SessionKey("max", 485448400, 485448400, config.IsolationIndividual, false)
+	group := sessionstore.SessionKey("max", -70330638164134, 485448400, config.IsolationIndividual, true)
+	s.Bind(personal, shared)
+	s.Bind(group, shared)
+	s.Bind(sessionstore.SessionKey("max", 999, 999, config.IsolationIndividual, false), "sess_other")
+
+	got := s.KeysFor(shared)
+	want := []string{group, personal}
+	if len(got) != len(want) {
+		t.Fatalf("KeysFor(%q) = %v; want both chats %v", shared, got, want)
+	}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("KeysFor(%q) = %v; want sorted %v", shared, got, want)
+		}
+	}
+
+	// KeyFor still answers one of them, so every existing caller keeps working.
+	if key, ok := s.KeyFor(shared); !ok || (key != group && key != personal) {
+		t.Fatalf("KeyFor(%q) = %q, %v; want one of the chats", shared, key, ok)
+	}
+
+	if keys := s.KeysFor("sess_nobody"); len(keys) != 0 {
+		t.Fatalf("KeysFor of an unknown session = %v; want none", keys)
+	}
+	if keys := s.KeysFor(""); len(keys) != 0 {
+		t.Fatalf("KeysFor of an empty id = %v; want none", keys)
+	}
+}
+
+// The store keeps its own bookkeeping under reserved keys (the last model, the
+// menu button). Those are not chats and must never be treated as one.
+func TestKeysForSkipsTheStoresOwnEntries(t *testing.T) {
+	s := sessionstore.New()
+	s.SetLastModel("deepseek/deepseek-flash")
+	s.SetMenuButton(508317063, "https://example.invalid/menu", "ask")
+
+	for key := range map[string]bool{"last_model": true, "menu_button:508317063": true} {
+		if keys := s.KeysFor(key); len(keys) != 0 {
+			t.Fatalf("KeysFor(%q) = %v; the store's own entry was read as a chat", key, keys)
+		}
+	}
+	if keys := s.KeysFor("deepseek/deepseek-flash"); len(keys) != 0 {
+		t.Fatalf("KeysFor of the last model id = %v; want none", keys)
+	}
+}
+
 func TestChatIDOfEveryKeyShape(t *testing.T) {
 	for _, tc := range []struct {
 		key  string

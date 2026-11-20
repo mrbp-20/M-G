@@ -51,10 +51,14 @@ func (b *Bot) SetTranscript(read transcriptReader) {
 	b.transcript = read
 }
 
-// transcriptReader hands the bot the messages of a session it did not author.
-// The gateway adapter never opens the session store itself: the process wires
-// this at startup, so a bot built in a test has no reader and posts no card.
-type transcriptReader func(sessionID string) []llm.Message
+// transcriptReader hands the bot the messages of a session it did not author,
+// and says whether it knows that session at all. The second answer is not
+// decoration: a conversation Coddy has not loaded yet returns no messages, and
+// that is indistinguishable from an empty one unless the reader says which it
+// is. The gateway adapter never opens the session store itself: the process
+// wires this at startup, so a bot built in a test has no reader and posts no
+// card.
+type transcriptReader func(sessionID string) (msgs []llm.Message, known bool)
 
 // historyCard is the message that opens a switched conversation: the divider,
 // then one line per message of the tail. The card is a single message, and MAX
@@ -231,7 +235,10 @@ func (b *Bot) postHistoryCard(ctx context.Context, c *Client, in inbound, id, ti
 	if b.transcript == nil || id == "" {
 		return
 	}
-	msgs := b.transcript(id)
+	msgs, known := b.transcript(id)
+	if !known {
+		return
+	}
 	text := historyCard(title, msgs)
 	out := Outgoing{Target: b.answerTarget(in), Text: text}
 	if len(msgs) > 0 {

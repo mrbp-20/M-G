@@ -308,6 +308,13 @@ func (s *Sender) deliver(ctx context.Context, text string) {
 	if err := s.b.sendText(ctx, s.c, s.target, text); err != nil {
 		s.b.log.Warn("max: answer not delivered", "err", err, "target", s.target)
 		s.b.park(s.target, text)
+
+		return
+	}
+	// The watcher (chatwatch.go) must not post this answer again as though a
+	// turn of another window had written it.
+	if s.files != nil {
+		s.b.selfPosted.mark(s.files.GetID(), text)
 	}
 }
 

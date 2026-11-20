@@ -57,6 +57,24 @@ type Bot struct {
 	// in a chat twice when two paths of one turn reach the same place.
 	sent *dupGuard
 
+	// watchMu guards watching: the conversations whose transcript is watched
+	// for answers of turns this bot did not start (chatwatch.go).
+	watchMu sync.Mutex
+	// watchPause is how often a watcher reads its conversation. Zero means
+	// chatWatchPause; a test sets a faster beat of its own.
+	watchPause time.Duration
+	// watchCtx is the context the watchers live in: the one Start got, so a stop
+	// ends intake first and the watchers second. Guarded by mu.
+	watchCtx context.Context
+	watching map[string]context.CancelFunc
+	// selfPosted remembers the answers this bot delivered itself, so the watcher
+	// does not post them a second time.
+	selfPosted *postedTexts
+	// turnEnd remembers how far into each conversation this bot's own turns have
+	// already delivered, so the watcher never repeats the block the transcript
+	// keeps for them (chatwatch.go).
+	turnEnd *turnMarks
+
 	// groups is the group policy of this build: a build with gateway.max.groups
 	// admits a group only when the configuration names it with a path and an
 	// access level, a build without the tag refuses every group and refuses to
@@ -198,6 +216,8 @@ func New(cfg *config.MaxGatewayConfig, runner SessionRunner, cwd string, log *sl
 		store:      sessionstore.NewPersisted(storePath),
 		mirror:     mirror,
 		sent:       newDupGuard(),
+		selfPosted: newPostedTexts(),
+		turnEnd:    newTurnMarks(),
 		cursorPath: cursorPath,
 		groups:     newGroupGate(cfg, log),
 		workers:    make(map[string]chan workerJob),
@@ -339,6 +359,14 @@ func (b *Bot) Start(ctx context.Context) error {
 	// again.
 	b.publishCommands(ctx)
 
+	// Answers of turns no chat asked for - a background task finishing, a
+	// scheduler job, another window - reach the chats that hold their
+	// conversation (chatwatch.go). The watchers live as long as this Start.
+	b.mu.Lock()
+	b.watchCtx = ctx
+	b.mu.Unlock()
+	b.armWatchers(ctx)
+
 	// Turns run under a context of their own, so that stopping the bot stops
 	// intake first and generation second: a token rotation must not cut an
 	// answer off half-written.
@@ -398,6 +426,19 @@ func (b *Bot) turnContext(ctx context.Context) context.Context {
 		return b.turnCtx
 	}
 	return ctx
+}
+
+// watchContext is the context the conversation watchers live in (chatwatch.go).
+// A bot that never started - a test, mostly - has none, and a background
+// context is the fair stand-in there.
+func (b *Bot) watchContext() context.Context {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	if b.watchCtx != nil {
+		return b.watchCtx
+	}
+
+	return context.Background()
 }
 
 // drainTimeout bounds the wait for turns still running when the bot stops.

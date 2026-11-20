@@ -119,6 +119,13 @@ func (b *Bot) Say(sessionID, text string) {
 	}
 	defer release()
 	chat.post("🌐 " + text)
+	// The watcher (chatwatch.go) reads the same conversation and would otherwise
+	// send this line a second time, without the mark: on 20.11.2026 every turn
+	// started in the browser reached the chat twice, once from here and once
+	// from there. Remembering what this road delivered keeps the two apart, and
+	// leaves the watcher its own job - an answer the mirror never saw, a turn the
+	// runtime starts by itself.
+	b.selfPosted.mark(sessionID, text)
 }
 
 // chatSender builds the sender of the chat the session is bound to, with nil

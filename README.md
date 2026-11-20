@@ -1,6 +1,6 @@
 # MAX gateway for Coddy — an overlay layer
 
-This is not a copy of Coddy: a layer of 189 files adds a gateway for the MAX messenger to Coddy. Coddy
+This is not a copy of Coddy: a layer of 190 files adds a gateway for the MAX messenger to Coddy. Coddy
 itself comes from its own repository —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,
 after which a build with the `gateway.max` tag produces a binary with the gateway.
@@ -9,8 +9,8 @@ after which a build with the `gateway.max` tag produces a binary with the gatewa
 
 | Item | Why |
 |---|---|
-| `overlay/` | 189 files at the same paths as in Coddy: 136 new and 53 replaced |
-| `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.4.34 file, sha256 of ours |
+| `overlay/` | 190 files at the same paths as in Coddy: 137 new and 53 replaced |
+| `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.4.34 file, sha256 of ours; 191 manifest rows in all, the header included |
 | `apply.sh` | version check, layer application, build (Linux, WSL2) |
 | `apply.ps1`, `apply.cmd` | the same for Windows: PowerShell and a cmd wrapper |
 | `VERSION` | the Coddy version the layer fits, and the layer's own version |

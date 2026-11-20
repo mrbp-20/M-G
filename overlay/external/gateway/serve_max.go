@@ -49,13 +49,13 @@ func ServeMax(ctx context.Context, opts Options) error {
 	// A switch of the conversation has to show where it landed, and the messages
 	// of a session live in the manager, not in the gateway: the bot is handed a
 	// reader (history.go) rather than the manager itself.
-	bot.SetTranscript(func(sessionID string) []llm.Message {
+	bot.SetTranscript(func(sessionID string) ([]llm.Message, bool) {
 		st := opts.Mgr.SessionByID(sessionID)
 		if st == nil {
-			return nil
+			return nil, false
 		}
 
-		return st.GetMessages()
+		return st.GetMessages(), true
 	})
 	// The gateway is transparent both ways: a turn started in the browser has to
 	// read in the chat its session is bound to, so the bot offers itself as a

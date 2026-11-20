@@ -599,6 +599,10 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 		return
 	}
 	b.log.Debug("max: agent turn done", "session", st.GetID())
+	// Everything this conversation holds now was delivered by this turn, one
+	// line at a time. The mark keeps the watcher from sending it again as one
+	// block (chatwatch.go).
+	b.markTurnEnd(st.GetID())
 	if result != nil && result.StopNotice != "" {
 		b.reply(ctx, in, result.StopNotice)
 	}
@@ -745,6 +749,9 @@ func (b *Bot) ensureSession(ctx context.Context, key, dir string) (*session.Stat
 		st.SetOrigin(session.GatewayOrigin(adapterName))
 	}
 	b.applyInitialModel(ctx, st)
+	// This conversation is held by a chat from now on, so an answer written by
+	// a turn no chat started has somewhere to go (chatwatch.go).
+	b.armWatcher(b.watchContext(), st.GetID())
 
 	return st, nil
 }

@@ -220,11 +220,11 @@ func TestPostHistoryCard_PostsTheTailWithTheButton(t *testing.T) {
 	f := newSendServer(t)
 	b := newTestBot(&stubRunner{})
 	c := f.client(t)
-	b.SetTranscript(func(string) []llm.Message {
+	b.SetTranscript(func(string) ([]llm.Message, bool) {
 		return []llm.Message{
 			{Role: llm.RoleUser, Content: "первый вопрос"},
 			{Role: llm.RoleAssistant, Content: "первый ответ"},
-		}
+		}, true
 	})
 
 	b.postHistoryCard(context.Background(), c, inbound{chatID: 10, userID: 1}, "s1", "Черновик")
@@ -259,7 +259,7 @@ func TestPostHistoryCard_AnEmptySessionGetsNoButton(t *testing.T) {
 	f := newSendServer(t)
 	b := newTestBot(&stubRunner{})
 	c := f.client(t)
-	b.SetTranscript(func(string) []llm.Message { return nil })
+	b.SetTranscript(func(string) ([]llm.Message, bool) { return nil, true })
 
 	b.postHistoryCard(context.Background(), c, inbound{chatID: 10, userID: 1}, "s1", "Пустая")
 
