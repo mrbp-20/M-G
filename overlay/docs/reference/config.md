@@ -334,6 +334,14 @@ OpenAI-compatible HTTP API defaults (used only by binaries built with -tags http
 | `httpserver.login.backup_codes` | object |  | Opaque generation identifier and SHA-256 hashes of the recovery codes for the web account. Plaintext codes are shown only when issued, and GET /coddy/config never returns their hashes. |
 | `httpserver.login.backup_codes.generation` | string |  | Identifier of the current recovery-code set. |
 | `httpserver.login.backup_codes.hashes` | list of strings |  | SHA-256 hashes of unused recovery codes. Consumption removes a hash and records it in a separate ledger, preventing reuse after an old configuration is restored. |
+| `httpserver.login.logout_url` | string | "" | Optional static HTTP(S) logout destination. Do not include secrets, tokens, identity data or user-specific parameters. Hidden from configuration output. |
+| `httpserver.login.oidc` | object |  | External OIDC sign-in configuration. |
+| `httpserver.login.oidc.enable` | boolean | false | Enable external OIDC sign-in. |
+| `httpserver.login.oidc.issuer` | string | "" | HTTPS OIDC issuer URL. |
+| `httpserver.login.oidc.client_id` | string | "" | OIDC client identifier. |
+| `httpserver.login.oidc.client_secret` | string | "" | OIDC client secret. Hidden from configuration output. |
+| `httpserver.login.oidc.redirect_url` | string | "" | Public HTTPS callback URL. |
+| `httpserver.login.oidc.required_role` | string | "" | Exact role required in the ID token roles array. |
 | `httpserver.login.session_ttl_hours` | integer | 24 | How long a browser stays signed in. Defaults to 24 hours. The sign-in form can request this persistent cookie with remember me, or a browser-session cookie when remember me is unchecked. |
 | `httpserver.public_docs` | boolean | false | When auth is enabled, keep /docs and /openapi.* reachable without a token. |
 | `httpserver.allow_insecure` | boolean | false | Say that a server without authentication is open on purpose: silences the two startup warnings about it - a non-loopback bind, and CORS that admits pages nobody listed (allow_loopback or "*") - and the --dry-run findings that mirror them, and turns off the refusal of a foreign Host on loopback and of a cross-origin write. |
@@ -454,6 +462,7 @@ Messenger bot adapters (used only by binaries built with -tags gateway, or -tags
 | `gateways.max.chats[].isolation` | string, one of `individual`, `shared`, `admin` |  | Per-chat session isolation override. |
 | `gateways.max.chats[].access` | string |  | Per-chat access override: "all", "admins", or "group:<name>". |
 | `gateways.max.chats[].workspace` | string |  | Directory reserved for a group chat: an absolute path, required for a group, and a group without it is not answered at all. Needs a build with the gateway.max.groups tag; a build without it refuses to start when a group is configured. |
+| `gateways.max.chats[].tools` | string, one of `show`, `hide` |  | What this chat sees of a turn's tool calls: "show" posts a card per call with the command and its output behind a button, "hide" posts none and leaves only the closing answer. Empty means the default: hide in a group (a chat id below zero), show in a direct chat. A card carries the command, the paths in it and whatever the output holds, and a group holds people the machine was not handed to. A call that did not run is reported either way, in one line and without the command. |
 | `gateways.pachca` | object |  | Pachca integration bot adapter: reads the bot's events history and answers through the Pachca REST API. Turn on Save events history (events_history_enabled) in the bot's outgoing webhook settings. See https://coddy.dev/docs/surfaces/pachca. |
 | `gateways.pachca.enable` | boolean | false | Run the Pachca bot in this coddy serve process. |
 | `gateways.pachca.token` | string | "" | Access token of the Pachca integration bot. Leave empty to read the PACHCA_BOT_TOKEN environment variable (e.g. via ~/.coddy/.env). |

@@ -375,6 +375,44 @@ func TestSayJobReport_RefusesToInventAConversation(t *testing.T) {
 	}
 }
 
+// TestSayJobReport_KeepsAQuietAnswerOutOfTheChat: a scheduled job that has
+// nothing to say leaves the conversation quiet, and its text stays in the run's
+// own session. Any answer with content still reaches the person - including one
+// that merely opens with the quiet phrase, which is a report, not silence.
+func TestSayJobReport_KeepsAQuietAnswerOutOfTheChat(t *testing.T) {
+	at := time.Date(2026, 11, 22, 11, 0, 0, 0, time.Local)
+	f := newSendServer(t)
+	b := newTestBot(newStubRunner())
+	b.setClient(f.client(t))
+	b.cfg.Admins = []int64{1}
+	b.store.Bind("max:user:1", "sess_admin")
+
+	if b.SayJobReport("Курс валют", at, "  "+silentJobReport+"  ") {
+		t.Fatal("a quiet report was posted")
+	}
+	if got := len(f.sends()); got != 0 {
+		t.Fatalf("the chat received %d messages for a quiet report, want none", got)
+	}
+
+	if !b.SayJobReport("Курс валют", at, silentJobReport+", но MOEX не ответил") {
+		t.Fatal("a report with content was not posted")
+	}
+	sends := f.sends()
+	if len(sends) != 1 {
+		t.Fatalf("the chat received %d messages, want one", len(sends))
+	}
+	if body := sends[0].body.Text; !strings.HasPrefix(body, "⏰ Задание:") || !strings.Contains(body, "MOEX не ответил") {
+		t.Fatalf("the report read %q, want the job header above its text", body)
+	}
+
+	if b.SayJobReport("Курс валют", at, "   ") {
+		t.Fatal("an empty report was posted")
+	}
+	if got := len(f.sends()); got != 1 {
+		t.Fatalf("the chat received %d messages after an empty one, want one", got)
+	}
+}
+
 // TestMirrorTurn_ThePageAnswerWithdrawsTheChatPrompt: when the person answers in
 // the browser, the chat says so instead of keeping a keyboard that does nothing.
 func TestMirrorTurn_ThePageAnswerWithdrawsTheChatPrompt(t *testing.T) {

@@ -97,6 +97,14 @@ type Sender struct {
 	// text that follows starts a paragraph of its own in the closing answer
 	// instead of running into the sentence before the call.
 	afterTool bool
+	// hideTools keeps the cards of this turn out of the chat: a group goes
+	// without them (config.ToolCardsHidden), because a card carries the
+	// command, the paths in it and whatever the output holds, and a group
+	// holds people the machine was not handed to.
+	hideTools bool
+	// failureTold is set once the card-less chat has heard that a call did not
+	// run: the line is one per turn, not one per failed call.
+	failureTold bool
 	// detached is set when the chat this turn writes into is switched to another
 	// conversation (/resume): the turn keeps running in its own session, which
 	// the web UI still shows, but it stops writing into the chat - no text, no
@@ -127,7 +135,23 @@ var _ acp.UpdateSender = (*Sender)(nil)
 // newSender is the sender of one turn in one chat. Step 5 hands it to the
 // session manager; nothing calls it from Start.
 func (b *Bot) newSender(ctx context.Context, c *Client, target Target) *Sender {
-	return &Sender{b: b, ctx: ctx, c: c, target: target}
+	s := &Sender{b: b, ctx: ctx, c: c, target: target}
+	if b.cfg != nil {
+		s.hideTools = b.cfg.ToolCardsHidden(chatRef(target))
+	}
+
+	return s
+}
+
+// chatRef is the id a chat entry is written under: the chat id itself, and for
+// a direct chat, where the platform leaves ChatID empty and names only the
+// person, the person's own id - which is the number that chat's entry carries.
+func chatRef(target Target) int64 {
+	if target.ChatID != 0 {
+		return target.ChatID
+	}
+
+	return target.UserID
 }
 
 // SendSessionUpdate handles the agent's streaming events.
@@ -188,6 +212,11 @@ func (s *Sender) SendSessionUpdate(sessionID string, update interface{}) error {
 		s.detailTokens[u.ToolCallID] = token
 		s.afterTool = true
 		s.mu.Unlock()
+		if s.hideTools {
+			// The chat goes without the cards: the call stays remembered for
+			// the journal and for the failure line, and nothing is posted.
+			return nil
+		}
 		// The call gets a message of its own with the button that opens it: the
 		// closing answer would take the button with it.
 		if mid := s.postDetails(token, title); mid != "" {
@@ -207,6 +236,13 @@ func (s *Sender) SendSessionUpdate(sessionID string, update interface{}) error {
 		// name the tool and the reason in the journal, so the refusal is on
 		// record and not only in the chat.
 		s.refusalOfNonAdmin(token, u.Status, u.Content)
+		// A chat without cards would otherwise hear nothing about a call that
+		// did not run, and the answer below would read as though the tool had
+		// worked. One line per turn, and without the command: the command is
+		// what the cards were hidden for.
+		if s.hideTools && toolCallFailed(u.Status) {
+			s.tellFailure()
+		}
 		// The update that starts a call carries its arguments: that is what the
 		// call is called by, and it is not the call's output.
 		if u.Status == "in_progress" {
@@ -245,19 +281,66 @@ func outgoingAnswer(text string) string {
 }
 
 // post sends a message of its own: a note that does not belong to the answer.
-func (s *Sender) post(text string) {
+//
+// It travels the answer's road: cut at the platform's limit, retried while the
+// platform is briefly quiet, parked when the refusal will stand. Until 22.11.2026
+// it did none of that - the mirrored answer of a turn started in the browser went
+// out as one text of 11 562 units, MAX answered "Field 'text' size (11562) must be
+// at most 4000", and two answers of that evening (17:46 and 17:48) left nothing in
+// the chat but a warning in the log.
+func (s *Sender) post(text string) bool {
 	if s.isDetached() {
-		return
+		return false
 	}
 	if s.b.sent.repeat(s.target, text) {
 		s.b.log.Debug("max: duplicate line dropped", "target", s.target, "runes", len([]rune(text)))
 
-		return
+		return false
 	}
 
-	if _, err := s.c.Send(s.ctx, Outgoing{Target: s.target, Text: text}); err != nil {
-		s.b.log.Warn("max: message not delivered", "err", err, "target", s.target)
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(s.ctx), flushTimeout)
+	defer cancel()
+	sent := true
+	for _, chunk := range splitText(text, maxTextRunes) {
+		if !s.sendPiece(ctx, chunk, "line") {
+			sent = false
+		}
 	}
+
+	return sent
+}
+
+// toolFailureNote is what a chat without cards hears about a call that did not
+// run: the fact, and never the command - the command is exactly what the cards
+// were hidden for.
+const toolFailureNote = "⚠️ Один из инструментов не сработал, отвечаю тем, что есть."
+
+// toolCallFailed reports whether a status says the call did not run to the end.
+// Pending and in_progress are still on their way and completed is done; every
+// other status - failed, cancelled, a refusal - is a call the turn went on
+// without.
+func toolCallFailed(status string) bool {
+	switch status {
+	case "", "pending", "in_progress", "completed":
+		return false
+	}
+
+	return true
+}
+
+// tellFailure says the line once per turn: a turn that loses three calls is
+// still one turn with one problem to report.
+func (s *Sender) tellFailure() {
+	s.mu.Lock()
+	if s.failureTold {
+		s.mu.Unlock()
+
+		return
+	}
+	s.failureTold = true
+	s.mu.Unlock()
+
+	s.post(toolFailureNote)
 }
 
 // Flush posts the answer of the turn as its closing messages, continued in
@@ -265,7 +348,8 @@ func (s *Sender) post(text string) {
 // out before this, so the answer is the last thing the chat receives.
 func (s *Sender) Flush() {
 	s.mu.Lock()
-	text := outgoingAnswer(s.responseBuf.String())
+	raw := s.responseBuf.String()
+	text := outgoingAnswer(raw)
 	s.responseBuf.Reset()
 	s.afterTool = false
 	s.mu.Unlock()
@@ -288,6 +372,18 @@ func (s *Sender) Flush() {
 	if strings.TrimSpace(text) == "" {
 		return
 	}
+	// The watcher (chatwatch.go) reads the same conversation out of the transcript
+	// and would post this answer a second time: it compares the whole text a
+	// message holds, while delivery marks one piece at a time, so the whole never
+	// matched the pieces (22.11.2026, an answer read twice in the chat). Mark both
+	// spellings - the answer as the turn wrote it and as the chat got it - so
+	// whatever the transcript keeps is recognised here.
+	if s.files != nil {
+		if t := strings.TrimSpace(raw); t != "" {
+			s.b.selfPosted.mark(s.files.GetID(), t)
+		}
+		s.b.selfPosted.mark(s.files.GetID(), strings.TrimSpace(text))
+	}
 	for _, chunk := range splitText(text, maxTextRunes) {
 		s.deliver(ctx, chunk)
 	}
@@ -301,21 +397,29 @@ func (s *Sender) deliver(ctx context.Context, text string) {
 
 		return
 	}
-	// One attempt used to be all an answer got. On 19.11.2026 an answer written
-	// in thirteen seconds died because the platform went quiet for fifteen: the
-	// retry and, if that fails too, the outbox are what turn that into a delay
-	// instead of silence (delivery.go).
+	s.sendPiece(ctx, text, "answer")
+}
+
+// sendPiece is the last road of every message out, an answer and a line of the
+// gateway's own alike. One attempt used to be all an answer got: on 19.11.2026 an
+// answer written in thirteen seconds died because the platform went quiet for
+// fifteen, so the retry and, failing that, the outbox are what turn a blip into a
+// delay instead of silence (delivery.go). The label only names the sender in the
+// log - "answer not delivered" or "line not delivered".
+func (s *Sender) sendPiece(ctx context.Context, text, what string) bool {
 	if err := s.b.sendText(ctx, s.c, s.target, text); err != nil {
-		s.b.log.Warn("max: answer not delivered", "err", err, "target", s.target)
+		s.b.log.Warn("max: "+what+" not delivered", "err", err, "target", s.target)
 		s.b.park(s.target, text)
 
-		return
+		return false
 	}
-	// The watcher (chatwatch.go) must not post this answer again as though a
-	// turn of another window had written it.
+	// The watcher (chatwatch.go) must not post this text again as though a turn
+	// of another window had written it.
 	if s.files != nil {
 		s.b.selfPosted.mark(s.files.GetID(), text)
 	}
+
+	return true
 }
 
 // refusalOfNonAdmin says in the journal what a restricted turn was stopped at:
@@ -1035,28 +1139,42 @@ func previewText(text string, limit int) string {
 	return "…" + string(r[len(r)-limit:])
 }
 
-// splitText cuts text into pieces of at most limit runes - the size one MAX
-// message takes - preferring a paragraph break, then a line break, then a
-// space, and never cutting a rune in two. The pieces together hold the whole
-// text: an answer that does not fit in one message continues in the next
-// instead of being truncated.
+// splitText cuts text into the pieces one message each: no piece is longer than
+// limit in the units MAX itself counts (UTF-16 code units, see textUnits). A rune
+// count would not do - 4000 emoji are 8000 units, and the platform refuses the
+// whole message with "Field 'text' size (8000) must be at most 4000".
+//
+// The count is taken on what actually leaves the machine, not on the text as
+// written. Client.Send passes the text through quietLinks, which puts a
+// zero-width space after every dot of a host-like word so MAX stops drawing
+// preview cards and blue links; each of those is one more unit for the platform.
+// Measuring the raw text therefore let a piece of 3 967 units arrive as 4 009 and
+// be refused - the answer of 22.11.2026 that sat in the outbox and could never go
+// out, because the dot count of a technical answer is not a rounding error.
+//
+// Pieces prefer a paragraph break, then a line break, then a space, and never cut
+// a rune in two. They hold the whole text between them: an answer that does not
+// fit in one message continues in the next instead of being truncated.
 func splitText(text string, limit int) []string {
 	if limit <= 0 {
 		limit = maxTextRunes
 	}
-	if utf8.RuneCountInString(text) <= limit {
+	if sentUnits(text) <= limit {
 		return []string{text}
 	}
 	var pieces []string
 	rest := text
-	for utf8.RuneCountInString(rest) > limit {
+	for sentUnits(rest) > limit {
 		r := []rune(rest)
-		cut := lastBreak(r[:limit])
+		cut := unitsFitForSend(r, limit)
+		if br := lastBreak(r[:cut]); br > 0 && br < cut {
+			cut = br
+		}
 		head := strings.TrimRight(string(r[:cut]), " \t\n")
 		tail := strings.TrimLeft(string(r[cut:]), "\n")
 		if head == "" {
 			// A run of text with no break in it at all: cut at the limit.
-			head, tail = string(r[:limit]), string(r[limit:])
+			head, tail = string(r[:cut]), string(r[cut:])
 		}
 		pieces = append(pieces, head)
 		rest = tail
@@ -1066,6 +1184,57 @@ func splitText(text string, limit int) []string {
 	}
 
 	return pieces
+}
+
+// sentUnits is how many units MAX counts for text it is given: the UTF-16 length
+// of the text after quietLinks has done its work, which is exactly what
+// Client.Send puts in the body.
+func sentUnits(text string) int {
+	return textUnits(quietLinks(text))
+}
+
+// unitsFitForSend is the length of the longest prefix of r whose sent form the
+// platform counts as no more than budget units. The first guess is the raw fit;
+// every defused dot then costs one more unit, so the cut moves back by the
+// overrun and the guess is repeated until it holds. At least one rune is always
+// taken, so a caller walking the text cannot stand still.
+func unitsFitForSend(r []rune, budget int) int {
+	cut := unitsFit(r, budget)
+	for cut > 1 {
+		over := sentUnits(string(r[:cut])) - budget
+		if over <= 0 {
+			return cut
+		}
+		if over >= cut-1 {
+			return 1
+		}
+		cut -= over
+	}
+
+	return 1
+}
+
+// unitsFit is the length of the longest prefix of r that the platform counts as
+// no more than budget units. At least one rune is always taken, so a caller
+// walking the text cannot stand still.
+func unitsFit(r []rune, budget int) int {
+	units := 0
+	for i, ch := range r {
+		w := 1
+		if ch > 0xFFFF {
+			w = 2 // a rune outside the basic plane is a surrogate pair
+		}
+		if units+w > budget {
+			if i == 0 {
+				return 1
+			}
+
+			return i
+		}
+		units += w
+	}
+
+	return len(r)
 }
 
 // lastBreak is where a piece ends: the last paragraph break, line break or

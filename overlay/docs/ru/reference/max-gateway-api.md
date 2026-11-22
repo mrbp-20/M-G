@@ -4,13 +4,13 @@
 
 Порядок чтения для новичка: `bot.go` (адаптер и его настройки), `dispatch.go` (что происходит с входящим сообщением), `sender.go` (что видит чат), затем `documents.go` и `pictures.go` (файлы и картинки), `incoming.go` (файлы от человека), `client.go` (API) и `model.go` (типы обмена).
 
-Файлов: 28, типов: 50, функций: 334; с описанием в коде: 356 из 384.
+Файлов: 28, типов: 50, функций: 343; с описанием в коде: 365 из 393.
 
 ## Содержание
 
 - [external/gateway/max/bot.go](#externalgatewaymaxbotgo) — типов: 3, функций: 17
 - [external/gateway/max/burst.go](#externalgatewaymaxburstgo) — типов: 2, функций: 6
-- [external/gateway/max/chatwatch.go](#externalgatewaymaxchatwatchgo) — типов: 2, функций: 15
+- [external/gateway/max/chatwatch.go](#externalgatewaymaxchatwatchgo) — типов: 2, функций: 16
 - [external/gateway/max/client.go](#externalgatewaymaxclientgo) — типов: 5, функций: 35
 - [external/gateway/max/commands.go](#externalgatewaymaxcommandsgo) — типов: 1, функций: 22
 - [external/gateway/max/commands_menu.go](#externalgatewaymaxcommands_menugo) — типов: 1, функций: 2
@@ -25,7 +25,7 @@
 - [external/gateway/max/incoming.go](#externalgatewaymaxincominggo) — типов: 1, функций: 19
 - [external/gateway/max/lateanswer.go](#externalgatewaymaxlateanswergo) — типов: 0, функций: 1
 - [external/gateway/max/media.go](#externalgatewaymaxmediago) — типов: 1, функций: 6
-- [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 15
+- [external/gateway/max/mirror.go](#externalgatewaymaxmirrorgo) — типов: 1, функций: 16
 - [external/gateway/max/model.go](#externalgatewaymaxmodelgo) — типов: 12, функций: 9
 - [external/gateway/max/nopreview.go](#externalgatewaymaxnopreviewgo) — типов: 0, функций: 2
 - [external/gateway/max/outbox.go](#externalgatewaymaxoutboxgo) — типов: 2, функций: 6
@@ -33,7 +33,7 @@
 - [external/gateway/max/poll.go](#externalgatewaymaxpollgo) — типов: 1, функций: 3
 - [external/gateway/max/reask.go](#externalgatewaymaxreaskgo) — типов: 0, функций: 5
 - [external/gateway/max/resume.go](#externalgatewaymaxresumego) — типов: 4, функций: 24
-- [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — типов: 4, функций: 41
+- [external/gateway/max/sender.go](#externalgatewaymaxsendergo) — типов: 4, функций: 48
 - [external/gateway/max/stop.go](#externalgatewaymaxstopgo) — типов: 0, функций: 10
 - [external/gateway/max/tooldetails.go](#externalgatewaymaxtooldetailsgo) — типов: 2, функций: 15
 
@@ -96,6 +96,7 @@
 - `func (p *postedTexts) has(sessionID, text string) bool` — _no description in the code_
 - `func newTurnMarks() *turnMarks` — _no description in the code_
 - `func (t *turnMarks) remember(sessionID string, at int)` — _no description in the code_
+- `func (t *turnMarks) endedAgo(sessionID string) time.Duration` — endedAgo reports how long ago a turn of this conversation recorded its end. It is negative when no turn of this bot has ever marked one.
 - `func (t *turnMarks) floor(sessionID string) int` — _no description in the code_
 - `func (b *Bot) markTurnEnd(sessionID string)` — markTurnEnd records that everything the conversation holds right now was delivered by this bot's own turn. Called where the turn ends (dispatch.go), so the watcher afterwards only sees what appeared later - the answer of a turn no chat started.
 - `func (b *Bot) armWatchers(ctx context.Context)` — armWatchers starts a watcher for every conversation a chat holds. It runs once at Start, so a bot that restarts keeps watching the conversations people are bound to instead of waiting for them to write again.
@@ -399,6 +400,7 @@
 
 ### Функции
 
+- `func isSilentJobReport(text string) bool` — isSilentJobReport tells a job's quiet answer from a report with content.
 - `func jobHeader(description string, at time.Time) string` — jobHeader marks a message a scheduled job sends into the conversation: the person must see at once that this is not a reply in the dialogue, but a task that fired on its own, and which one it was.
 - `func (b *Bot) reportSession() (string, bool)` — reportSession is the conversation a scheduled job reports into: the chat of an administrator of this gateway, read from the binding that chat already holds. Nothing is minted here - a gateway whose administrator has never written has nowhere to report, and the report then stays in the job's own session.
 - `func reportKey(admin int64) string` — reportKey is the binding key of an administrator's private chat: the same one a message typed there is filed under, so a report follows the conversation rather than a number kept beside the job.
@@ -551,11 +553,15 @@
 - `func (s *Sender) isDetached() bool { return s.detached.Load() }` — isDetached reports whether the chat of this turn now belongs to another conversation.
 - `func (s *Sender) sessionID() string` — sessionID names the session of this turn, for the log.
 - `func (b *Bot) newSender(ctx context.Context, c *Client, target Target) *Sender` — newSender is the sender of one turn in one chat. Step 5 hands it to the session manager; nothing calls it from Start.
+- `func chatRef(target Target) int64` — chatRef is the id a chat entry is written under: the chat id itself, and for a direct chat, where the platform leaves ChatID empty and names only the person, the person's own id - which is the number that chat's entry carries.
 - `func (s *Sender) SendSessionUpdate(sessionID string, update interface{}) error` — SendSessionUpdate handles the agent's streaming events.
 - `func outgoingAnswer(text string) string` — outgoingAnswer is answer text as a chat can show it: the placement markers of shared files exist for the web UI, which draws the artifact card where the marker stands, and no messenger renders them. The strip runs on the whole text at once, never on each accumulated chunk - a strip trims whitespace, and doing it per chunk would eat the spaces and newlines between chunks and glue words together. The stored message keeps its markers: only the way out is stripped.
-- `func (s *Sender) post(text string)` — post sends a message of its own: a note that does not belong to the answer.
+- `func (s *Sender) post(text string) bool` — post sends a message of its own: a note that does not belong to the answer. It travels the answer's road: cut at the platform's limit, retried while the platform is briefly quiet, parked when the refusal will stand. Until 22.11.2026 it did none of that - the mirrored answer of a turn started in the browser went out as one text of 11 562 units, MAX answered "Field 'text' size (11562) must be at most 4000", and two answers of that evening (17:46 and 17:48) left nothing in the chat but a warning in the log.
+- `func toolCallFailed(status string) bool` — toolCallFailed reports whether a status says the call did not run to the end. Pending and in_progress are still on their way and completed is done; every other status - failed, cancelled, a refusal - is a call the turn went on without.
+- `func (s *Sender) tellFailure()` — tellFailure says the line once per turn: a turn that loses three calls is still one turn with one problem to report.
 - `func (s *Sender) Flush()` — Flush posts the answer of the turn as its closing messages, continued in further messages when it does not fit in one. Everything the turn did went out before this, so the answer is the last thing the chat receives.
 - `func (s *Sender) deliver(ctx context.Context, text string)` — deliver posts one piece of the answer. The pieces go out in order, one after another, so the closing answer reads the way the turn wrote it.
+- `func (s *Sender) sendPiece(ctx context.Context, text, what string) bool` — sendPiece is the last road of every message out, an answer and a line of the gateway's own alike. One attempt used to be all an answer got: on 19.11.2026 an answer written in thirteen seconds died because the platform went quiet for fifteen, so the retry and, failing that, the outbox are what turn a blip into a delay instead of silence (delivery.go). The label only names the sender in the log - "answer not delivered" or "line not delivered".
 - `func (s *Sender) refusalOfNonAdmin(token, status string, items []acp.ToolCallResultItem)` — refusalOfNonAdmin says in the journal what a restricted turn was stopped at: the tool, the status the core gave the call and the first line of what came back. Only a turn of somebody who is not the bot's admin is written - a failed call in an ordinary turn is the agent's own business, and a journal nobody can read is worse than none.
 - `func firstLine(text string) string` — firstLine is the first line of a text, cut to what a journal line can hold.
 - `func permissionModeOf(params acp.PermissionRequestParams) string` — permissionModeOf is the mode a permission request was asked under: the mode of the agent that asks (a subagent narrows its own below the session's), else the mode of the session the turn runs in. Both empty means the caller did not say, and the request is a question.
@@ -586,7 +592,10 @@
 - `func permissionText(params acp.PermissionRequestParams) string` — permissionText is what the chat is asked about.
 - `func questionText(q acp.QuestionPrompt) string` — questionText is what a question says: its header, when it has one, above the question itself.
 - `func previewText(text string, limit int) string` — previewText is the tail of the answer, as the live message shows it.
-- `func splitText(text string, limit int) []string` — splitText cuts text into pieces of at most limit runes - the size one MAX message takes - preferring a paragraph break, then a line break, then a space, and never cutting a rune in two. The pieces together hold the whole text: an answer that does not fit in one message continues in the next instead of being truncated.
+- `func splitText(text string, limit int) []string` — splitText cuts text into the pieces one message each: no piece is longer than limit in the units MAX itself counts (UTF-16 code units, see textUnits). A rune count would not do - 4000 emoji are 8000 units, and the platform refuses the whole message with "Field 'text' size (8000) must be at most 4000". The count is taken on what actually leaves the machine, not on the text as written. Client.Send passes the text through quietLinks, which puts a zero-width space after every dot of a host-like word so MAX stops drawing preview cards and blue links; each of those is one more unit for the platform. Measuring the raw text therefore let a piece of 3 967 units arrive as 4 009 and be refused - the answer of 22.11.2026 that sat in the outbox and could never go out, because the dot count of a technical answer is not a rounding error. Pieces prefer a paragraph break, then a line break, then a space, and never cut a rune in two. They hold the whole text between them: an answer that does not fit in one message continues in the next instead of being truncated.
+- `func sentUnits(text string) int` — sentUnits is how many units MAX counts for text it is given: the UTF-16 length of the text after quietLinks has done its work, which is exactly what Client.Send puts in the body.
+- `func unitsFitForSend(r []rune, budget int) int` — unitsFitForSend is the length of the longest prefix of r whose sent form the platform counts as no more than budget units. The first guess is the raw fit; every defused dot then costs one more unit, so the cut moves back by the overrun and the guess is repeated until it holds. At least one rune is always taken, so a caller walking the text cannot stand still.
+- `func unitsFit(r []rune, budget int) int` — unitsFit is the length of the longest prefix of r that the platform counts as no more than budget units. At least one rune is always taken, so a caller walking the text cannot stand still.
 - `func lastBreak(r []rune) int` — lastBreak is where a piece ends: the last paragraph break, line break or space in the run up to the limit - never before its middle, so a piece is not cut shorter than it has to be - or the limit itself when the text has no break in it.
 
 ## external/gateway/max/stop.go

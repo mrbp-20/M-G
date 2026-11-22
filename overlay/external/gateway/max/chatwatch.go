@@ -39,6 +39,19 @@ const (
 // touching a variable the running watchers share.
 const chatWatchPause = 2 * time.Second
 
+// chatWatchGrace is how long a watcher stays quiet after a turn of the same
+// conversation stopped running.
+//
+// A turn this bot wraps delivers its answer itself and only then tells the
+// watcher where to start (mirror.go, markTurnEnd). Between the running flag
+// clearing and that mark there is a window of a few hundred milliseconds, and a
+// tick landing inside it used to post the very answer the mirror had just
+// delivered: on 22.11.2026 Merlen's chat got one block from the mirror and the
+// same text again 0.5 s later (101 + 3 542 runes), while my own runs of the same
+// build never hit it. A float is a race, so the grace closes the window by
+// construction instead of hoping the ticks fall elsewhere.
+const chatWatchGrace = 3 * time.Second
+
 // postedTexts remembers what this bot delivered on its own, so the watcher does
 // not post the same answer a second time. The window is ten minutes rather than
 // the three seconds of dupGuard: the watcher reads the conversation on a two
@@ -105,10 +118,15 @@ func (p *postedTexts) has(sessionID, text string) bool {
 type turnMarks struct {
 	mu sync.Mutex
 	at map[string]int
+	// ended is when a turn of that conversation last recorded its end. The
+	// watcher uses it to tell "a turn may still be finishing its own delivery"
+	// from "nobody delivered this", and writes it down when an answer slips
+	// through anyway (chatwatch.go, postToChats).
+	ended map[string]time.Time
 }
 
 func newTurnMarks() *turnMarks {
-	return &turnMarks{at: make(map[string]int)}
+	return &turnMarks{at: make(map[string]int), ended: make(map[string]time.Time)}
 }
 
 func (t *turnMarks) remember(sessionID string, at int) {
@@ -120,9 +138,29 @@ func (t *turnMarks) remember(sessionID string, at int) {
 	if t.at == nil {
 		t.at = make(map[string]int)
 	}
+	if t.ended == nil {
+		t.ended = make(map[string]time.Time)
+	}
 	if at > t.at[sessionID] {
 		t.at[sessionID] = at
 	}
+	t.ended[sessionID] = time.Now()
+}
+
+// endedAgo reports how long ago a turn of this conversation recorded its end. It
+// is negative when no turn of this bot has ever marked one.
+func (t *turnMarks) endedAgo(sessionID string) time.Duration {
+	if t == nil || sessionID == "" {
+		return -1
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	at, ok := t.ended[sessionID]
+	if !ok {
+		return -1
+	}
+
+	return time.Since(at)
 }
 
 func (t *turnMarks) floor(sessionID string) int {
@@ -212,6 +250,10 @@ func (b *Bot) watchSession(ctx context.Context, sessionID string, seen int, sett
 	ticker := time.NewTicker(pause)
 	defer ticker.Stop()
 
+	// lastActive is when this conversation last ran a turn. It outlives a single
+	// tick on purpose: the grace below counts from it, not from the tick.
+	var lastActive time.Time
+
 	for {
 		select {
 		case <-ctx.Done():
@@ -255,22 +297,60 @@ func (b *Bot) watchSession(ctx context.Context, sessionID string, seen int, sett
 			if floor := b.turnEnd.floor(sessionID); seen < floor {
 				seen = floor
 			}
+			// A turn that is running, or that stopped running a moment ago,
+			// delivers its own answer and only then records where this watcher
+			// must start (mirror.go, markTurnEnd). A tick landing between the
+			// running flag clearing and that mark used to post the very answer
+			// the mirror had just sent: on 22.11.2026 the chat got one block from
+			// the mirror and the same text again 0.5 s later. The grace makes the
+			// window close by construction instead of hoping the ticks fall
+			// elsewhere. The pointer is left where it stands, so nothing is lost -
+			// the same block is looked at again once the grace is over.
+			grace := b.watchGrace
+			if grace <= 0 {
+				grace = chatWatchGrace
+			}
+			if b.turnActive(sessionID) {
+				lastActive = time.Now()
+
+				continue
+			}
+			if !lastActive.IsZero() && time.Since(lastActive) < grace {
+				continue
+			}
 			// A turn of this chat delivers itself; recognising it here is what
 			// keeps the answer from arriving twice.
 			ours := b.anyOurs(keys)
-			for _, m := range msgs[seen:] {
-				seen++
+			for i := seen; i < len(msgs); i++ {
+				m := msgs[i]
 				if m.Role != llm.RoleAssistant {
+					seen = i + 1
+
 					continue
 				}
 				text := strings.TrimSpace(m.Content)
 				if text == "" || ours {
+					seen = i + 1
+
 					continue
 				}
 				if b.selfPosted.has(sessionID, text) {
+					seen = i + 1
+
 					continue
 				}
+				// A turn still running in this conversation delivers this very
+				// answer through the mirror (mirror.go), and it wins the race
+				// whenever it posts first: on 22.11.2026 both roads posted the same
+				// answer 0.47 s apart and the person read it twice. Let the pointer
+				// stand and look again at the next tick - after the turn ends, a
+				// text the mirror delivered carries its mark, and a text nobody
+				// delivered is posted here, which is the case of 20.11.2026.
+				if b.turnActive(sessionID) {
+					break
+				}
 				b.postToChats(ctx, sessionID, keys, text)
+				seen = i + 1
 			}
 		}
 	}
@@ -291,7 +371,7 @@ func (b *Bot) anyOurs(keys []string) bool {
 // postToChats delivers one answer of a background turn into every chat that
 // holds the conversation at this moment.
 func (b *Bot) postToChats(ctx context.Context, sessionID string, keys []string, text string) {
-	text = strings.TrimSpace(clipUnits(text, maxTextRunes-historySlack))
+	text = strings.TrimSpace(text)
 	if text == "" {
 		return
 	}
@@ -318,25 +398,34 @@ func (b *Bot) postToChats(ctx context.Context, sessionID string, keys []string, 
 		if !ok {
 			continue
 		}
-		if b.sent.repeat(target, text) {
-			b.log.Debug("max: duplicate answer dropped", "target", target)
-
-			continue
-		}
-		sctx, cancel := context.WithTimeout(ctx, actionTimeout*2)
-		_, err := c.Send(sctx, Outgoing{Target: target, Text: text})
-		cancel()
-		if err != nil {
-			b.log.Warn("max: answer of a background turn not posted",
-				"session", sessionID, "target", target, "err", err)
-			b.park(target, text)
-
-			continue
+		// The answer takes the road of every other message out (sender.go post):
+		// split at the platform's limit, markdown formatting, a retry while the
+		// platform is quiet and the outbox when the refusal will stand. It used to
+		// be clipped into one message and sent raw, so a long answer arrived cut -
+		// on 22.11.2026 a 3 980-unit stub stood in the chat next to the whole
+		// answer, its last paragraphs gone and its "**" showing through.
+		if b.newSender(ctx, c, target).post(text) {
+			b.log.Info("max: answer of a background turn reached the chat",
+				"session", sessionID, "user", target.UserID, "chat", target.ChatID,
+				"runes", len([]rune(text)))
+			// A turn of this conversation recorded its end moments ago: either the
+			// grace above has just run out and this is the answer the mirror could
+			// not deliver, or - what we want to see - a mark landed too late and
+			// the chat got the text twice. Writing it down is how a float stops
+			// being invisible: on 22.11.2026 the only trace was two identical
+			// blocks in a phone screenshot.
+			if ago := b.turnEnd.endedAgo(sessionID); ago >= 0 && ago < chatWatchGrace {
+				b.log.Info("max: the answer arrived moments after a turn of this conversation ended",
+					"session", sessionID, "runes", len([]rune(text)),
+					"ago", ago.Round(time.Millisecond),
+					"note", "if the chat shows it twice, the end mark landed after this tick")
+			}
+		} else {
+			b.log.Warn("max: answer of a background turn is waiting for another attempt",
+				"session", sessionID, "user", target.UserID, "chat", target.ChatID,
+				"runes", len([]rune(text)))
 		}
 		b.selfPosted.mark(sessionID, text)
-		b.log.Info("max: answer of a background turn reached the chat",
-			"session", sessionID, "user", target.UserID, "chat", target.ChatID,
-			"runes", len([]rune(text)))
 	}
 }
 

@@ -334,6 +334,14 @@ VS Code (с расширением YAML), Zed, Neovim и Helix подхваты�
 | `httpserver.login.backup_codes` | объект |  | Идентификатор набора и SHA-256-хеши резервных кодов учётной записи веб-интерфейса. Коды открытым текстом показываются только при создании, а GET /coddy/config не возвращает их хеши. |
 | `httpserver.login.backup_codes.generation` | строка |  | Идентификатор текущего набора резервных кодов. |
 | `httpserver.login.backup_codes.hashes` | список строк |  | SHA-256-хеши неиспользованных резервных кодов. Использованный хеш удаляется из набора и записывается в отдельный журнал, чтобы код нельзя было использовать повторно после восстановления старой конфигурации. |
+| `httpserver.login.logout_url` | строка | "" | Необязательный статический HTTP(S)-адрес выхода. Не включайте секреты, токены, данные идентификации или параметры конкретного пользователя. Значение скрыто в выводе конфигурации. |
+| `httpserver.login.oidc` | объект |  | Настройки внешнего входа через OIDC. |
+| `httpserver.login.oidc.enable` | логическое значение | false | Включить внешний вход через OIDC. |
+| `httpserver.login.oidc.issuer` | строка | "" | HTTPS-адрес издателя OIDC. |
+| `httpserver.login.oidc.client_id` | строка | "" | Идентификатор клиента OIDC. |
+| `httpserver.login.oidc.client_secret` | строка | "" | Секрет клиента OIDC. Значение скрыто в выводе конфигурации. |
+| `httpserver.login.oidc.redirect_url` | строка | "" | Публичный HTTPS-адрес обратного вызова. |
+| `httpserver.login.oidc.required_role` | строка | "" | Значение, с которым должна точно совпадать одна из ролей в массиве roles ID-токена. |
 | `httpserver.login.session_ttl_hours` | целое число | 24 | Сколько времени действует вход в браузере. По умолчанию 24 часа. Галка "Не выходить из системы" включает постоянную cookie на этот срок, а без неё используется сессионная cookie. |
 | `httpserver.public_docs` | логическое значение | false | Если аутентификация включена, оставлять /docs и /openapi.* доступными без токена. |
 | `httpserver.allow_insecure` | логическое значение | false | Говорит, что сервер без аутентификации открыт сознательно. Подавляет два предупреждения при запуске о таком сервере - о привязке не к loopback и о CORS, который пускает никем не перечисленные страницы (allow_loopback или "*") - и соответствующие находки --dry-run, а также отключает отказ чужому Host на loopback и межсайтовой записи. |
@@ -454,6 +462,7 @@ VS Code (с расширением YAML), Zed, Neovim и Helix подхваты�
 | `gateways.max.chats[].isolation` | строка, одно из `individual`, `shared`, `admin` |  | Переопределение изоляции сессий для чата. |
 | `gateways.max.chats[].access` | строка |  | Переопределение доступа для чата - "all", "admins" или "group:<name>". |
 | `gateways.max.chats[].workspace` | строка |  | Directory reserved for a group chat: an absolute path, required for a group, and a group without it is not answered at all. Needs a build with the gateway.max.groups tag; a build without it refuses to start when a group is configured. |
+| `gateways.max.chats[].tools` | строка, одно из `show`, `hide` |  | Что этот чат видит из вызовов инструментов за ход: "show" отправляет карточку на каждый вызов - с командой и её выводом за кнопкой, "hide" не отправляет карточек вовсе и оставляет только итоговый ответ. Пусто - значение по умолчанию: скрыть в группе (id чата меньше нуля) и показывать в личном чате. Карточка несёт команду, пути в ней и то, что вернул вывод, а в группе сидят люди, которым машину не выдавали. О том, что вызов не выполнился, чат узнаёт в любом случае - одной строкой и без команды. |
 | `gateways.pachca` | объект |  | Адаптер интеграционного бота Pachca - читает историю событий бота и отвечает через REST API Pachca. Включите сохранение истории событий (events_history_enabled) в настройках исходящего вебхука бота. См. https://coddy.dev/docs/surfaces/pachca. |
 | `gateways.pachca.enable` | логическое значение | false | Запускать бота Pachca в этом процессе coddy serve. |
 | `gateways.pachca.token` | строка | "" | Токен доступа интеграционного бота Pachca. Оставьте пустым, чтобы читать переменную окружения PACHCA_BOT_TOKEN (например, через ~/.coddy/.env). |

@@ -1539,6 +1539,15 @@
                 }
               }
             },
+            "logout_url": {"type": "string", "description": "Optional static HTTP(S) logout destination. Do not include secrets, tokens, identity data or user-specific parameters. Hidden from configuration output.", "default": ""},
+            "oidc": {"type": "object", "description": "External OIDC sign-in configuration.", "additionalProperties": false, "properties": {
+              "enable": {"type": "boolean", "description": "Enable external OIDC sign-in.", "default": false},
+              "issuer": {"type": "string", "description": "HTTPS OIDC issuer URL.", "default": ""},
+              "client_id": {"type": "string", "description": "OIDC client identifier.", "default": ""},
+              "client_secret": {"type": "string", "description": "OIDC client secret. Hidden from configuration output.", "default": ""},
+              "redirect_url": {"type": "string", "description": "Public HTTPS callback URL.", "default": ""},
+              "required_role": {"type": "string", "description": "Exact role required in the ID token roles array.", "default": ""}
+            }},
             "session_ttl_hours": {
               "type": "integer",
               "description": "How long a browser stays signed in. Defaults to 24 hours. The sign-in form can request this persistent cookie with remember me, or a browser-session cookie when remember me is unchecked.",
@@ -2069,6 +2078,14 @@
                   "workspace": {
                     "type": "string",
                     "description": "Not used here: the workspace is a MAX gateway key (gateways.max.chats[].workspace), where it names the directory a group chat is confined to."
+                  },
+                  "tools": {
+                    "type": "string",
+                    "description": "Not used here: the cards of a turn's tool calls are a MAX gateway key (gateways.max.chats[].tools).",
+                    "enum": [
+                      "show",
+                      "hide"
+                    ]
                   }
                 }
               }
@@ -2210,6 +2227,14 @@
                   "workspace": {
                     "type": "string",
                     "description": "Directory reserved for a group chat: an absolute path, required for a group, and a group without it is not answered at all. Needs a build with the gateway.max.groups tag; a build without it refuses to start when a group is configured."
+                  },
+                  "tools": {
+                    "type": "string",
+                    "description": "What this chat sees of a turn's tool calls: \"show\" posts a card per call with the command and its output behind a button, \"hide\" posts none and leaves only the closing answer. Empty means the default, which is hide in a group (chat_id below zero) and show in a direct chat: a card carries the command, the paths in it and whatever the output holds, and a group holds people the machine was not handed to.",
+                    "enum": [
+                      "show",
+                      "hide"
+                    ]
                   }
                 }
               }
@@ -2319,6 +2344,14 @@
                   "workspace": {
                     "type": "string",
                     "description": "Not used here: the workspace is a MAX gateway key (gateways.max.chats[].workspace), where it names the directory a group chat is confined to."
+                  },
+                  "tools": {
+                    "type": "string",
+                    "description": "Not used here: the cards of a turn's tool calls are a MAX gateway key (gateways.max.chats[].tools).",
+                    "enum": [
+                      "show",
+                      "hide"
+                    ]
                   }
                 }
               }

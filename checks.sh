@@ -260,7 +260,7 @@ for f in README.ru.md README.md; do
 	printf '%s' "$text" | grep -qE "($LAYER_FILES файл|$LAYER_FILES files)" || missing="$missing файлов"
 	printf '%s' "$text" | grep -qE "($LAYER_NEW новых|$LAYER_NEW new)" || missing="$missing новых"
 	printf '%s' "$text" | grep -qE "($LAYER_MODIFIED заменяемых|$LAYER_MODIFIED replaced)" || missing="$missing заменяемых"
-	printf '%s' "$text" | grep -qE "($rows строка манифеста|$rows строк манифеста|$rows manifest rows)" || missing="$missing строк-манифеста"
+	printf '%s' "$text" | grep -qE "($rows строка манифеста|$rows строки манифеста|$rows строк манифеста|$rows manifest rows)" || missing="$missing строк-манифеста"
 	if [ -z "$missing" ]; then
 		ok "$f: числа совпадают с VERSION ($LAYER_FILES / $LAYER_NEW / $LAYER_MODIFIED, $rows строка)"
 	else

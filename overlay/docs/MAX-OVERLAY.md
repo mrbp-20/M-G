@@ -10,7 +10,7 @@ Keep it current: a file added to the overlay, or a reason that changed, belongs 
 
 Two rules make updates cheap, and both are older than this document:
 
-1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 158 of our 212 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
+1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 165 of our 219 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
 2. **A change to somebody else's file is a hook, not a rewrite.** Two lines of registration beat a restructured function: upstream keeps moving those functions, and every line we add there is a line we pay for at the next rebase.
 
 When a change to a shared file turns out to be generic — useful to any gateway, not only to MAX — it belongs upstream as a pull request. A merged pull request removes the file from the overlay for good. That is also the road to Pavel taking the gateway itself.
@@ -79,6 +79,21 @@ which the new reply type does not have. Both were ours, both fixed in place. Aft
 `go vet` is clean with no tags, with `gateway.max` and with the full set, all three builds pass, and the
 tests are green: gateway 98.6 s under `-race`, `external/httpserver` 74.6 s, `internal/agent` 86.4 s,
 `internal/session` 68.1 s, `internal/serve` 2.3 s, `internal/config` 1.6 s.
+
+The rebase onto 1.4.39 came a day later and was the quietest of the four: five releases (1.4.35 ... 1.4.39),
+190 upstream files, +10 343/-2 728, and fifteen of them ours. Git needed no help at all - replaying 234
+commits produced **no conflict**, which `git merge-tree` had predicted before the rebase began. The
+frightening one, #770 "scope design and project instructions by surface", turned out to touch neither
+`external/httpserver` nor `internal/session`: it rewrote the rules, cut `DESIGN.md` down by 1 839 lines and
+grew `specs/` and `internal/docsgen`. Every hook stayed where it was - `SurfaceSystemPrompt`,
+`mirrorToChats` and `sayToChats` in `server.go`, `ChatMirrors` in `serve.go`, the `tools` and `workspace`
+fields in the config and its schema. What #774 (OIDC sign-in, external logout) did do is land in `server.go`
+and in seven configuration files that carry our fields; it merged textually clean, but signing in through
+the web UI still has to be proved by hand on both machines. Pavel also deleted `packaging/nfpm-desktop.yaml`
+and `scripts/build-desktop-packages.sh` in these five releases, and the layer does not carry them back.
+Gates after it: `gofmt` silent, `go vet` clean on three tag sets, three builds pass, the gateway 103.1 s
+under `-race`, `external/httpserver` 83.0 s, `internal/session` 67.9 s, `internal/config` 5.4 s,
+`internal/serve` 2.3 s.
 
 ### The document seam: two files
 
@@ -156,6 +171,13 @@ The round of 20.11.2026 lives in `external/gateway/max`: `mirror.go` gained
 surface too — the chat id it needs is learned from inbound messages (`chatIDs`),
 and `Say` marks what it delivered so the conversation watcher (`chatwatch.go`)
 does not repeat the same line.
+
+The round of 21.11.2026 keeps the cards of a turn's tool calls out of a group:
+`sender.go` reads `config.ToolCardsHidden`, a chat entry's `tools: show|hide`
+with the default taken from the chat id's sign, and a card-less group still
+hears one line when a call did not run — without the command, which is what the
+cards were hidden for. `GatewayChatConfig.ToolCards` is the field, carried
+through the JSON settings so the form does not wipe it.
 
 ### Documents: nine files
 

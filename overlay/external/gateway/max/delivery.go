@@ -5,6 +5,7 @@ package max
 import (
 	"context"
 	"errors"
+	"strings"
 	"time"
 )
 
@@ -72,17 +73,52 @@ func (b *Bot) flushOutbox(ctx context.Context) {
 	}
 	b.log.Info("max: sending parked answers", "waiting", len(items))
 	delivered := 0
-	for _, it := range items {
-		if err := b.sendText(ctx, c, it.Target, it.Text); err != nil {
-			b.log.Warn("max: parked answer still undelivered", "err", err,
-				"target", it.Target, "waiting", len(items)-delivered)
+	var leftover []outboxEntry
+	for i, it := range items {
+		// A parked answer is cut the same way a live one is. Sending it whole was
+		// the reason an answer of 22.11.2026 could never go out: the platform
+		// counted 4 009 units where we had measured 3 967, refused it, and every
+		// restart repeated the same refusal.
+		pieces := splitText(it.Text, maxTextRunes)
+		failed := -1
+		for n, piece := range pieces {
+			if err := b.sendText(ctx, c, it.Target, piece); err != nil {
+				b.log.Warn("max: parked answer still undelivered", "err", err,
+					"target", it.Target, "waiting", len(items)-delivered,
+					"piece", n+1, "of", len(pieces))
+				failed = n
 
-			break
+				break
+			}
 		}
-		delivered++
+		if failed < 0 {
+			delivered++
+			continue
+		}
+		if failed < len(pieces) {
+			// Keep what did not go out, so a refused piece never takes the tail
+			// behind it with it.
+			leftover = append(leftover, outboxEntry{
+				Target: it.Target,
+				Text:   strings.Join(pieces[failed:], "\n\n"),
+			})
+		}
+		leftover = append(leftover, items[i+1:]...)
+
+		break
+	}
+	switch {
+	case len(leftover) > 0:
+		// What went out is already delivered; the list is rebuilt from what did
+		// not, in the same order.
+		b.outbox.drop(len(items))
+		for _, it := range leftover {
+			b.outbox.add(it.Target, it.Text)
+		}
+	case delivered > 0:
+		b.outbox.drop(delivered)
 	}
 	if delivered > 0 {
-		b.outbox.drop(delivered)
 		b.log.Info("max: parked answers delivered", "count", delivered, "waiting", b.outbox.length())
 	}
 }

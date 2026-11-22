@@ -116,6 +116,9 @@ func watchedBot(t *testing.T, c *Client, conv *tail) *Bot {
 	b := New(testCfg(), newStubRunner(), "", slog.New(slog.DiscardHandler), "", "", nil)
 	b.setClient(c)
 	b.watchPause = 5 * time.Millisecond
+	// The same pace for the grace: a test that needs the window of 22.11.2026
+	// sets its own (watcher_grace_test.go), every other test keeps its speed.
+	b.watchGrace = 20 * time.Millisecond
 	b.store = sessionstore.New()
 	b.transcript = conv.read
 	b.outbox = newOutbox(filepath.Join(t.TempDir(), "outbox.json"))
@@ -235,6 +238,10 @@ func TestChatWatcher_DoesNotRepeatWhatWeDelivered(t *testing.T) {
 // TestChatWatcher_ParksTheAnswerWhenThePlatformRefuses: a network blip must cost
 // a delay, not the answer - it goes to the outbox and leaves on the next connect.
 func TestChatWatcher_ParksTheAnswerWhenThePlatformRefuses(t *testing.T) {
+	// The watcher road retries before it parks (it takes the answer's road now),
+	// so the pauses are squeezed to a millisecond: what is being checked is the
+	// park at the end, not the patience.
+	fastTextRetries(t)
 	conv := &tail{}
 	b := watchedBot(t, refusingClient(t), conv)
 	b.store.Bind("max:user:1", "sess-1")

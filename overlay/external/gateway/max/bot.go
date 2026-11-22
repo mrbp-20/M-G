@@ -63,6 +63,10 @@ type Bot struct {
 	// watchPause is how often a watcher reads its conversation. Zero means
 	// chatWatchPause; a test sets a faster beat of its own.
 	watchPause time.Duration
+	// watchGrace is how long a watcher stays quiet after a turn of the same
+	// conversation stopped running. Zero means chatWatchGrace; a test sets its
+	// own to keep the window it proves short.
+	watchGrace time.Duration
 	// watchCtx is the context the watchers live in: the one Start got, so a stop
 	// ends intake first and the watchers second. Guarded by mu.
 	watchCtx context.Context
@@ -224,6 +228,7 @@ func New(cfg *config.MaxGatewayConfig, runner SessionRunner, cwd string, log *sl
 		sent:       newDupGuard(),
 		selfPosted: newPostedTexts(),
 		turnEnd:    newTurnMarks(),
+		watchGrace: chatWatchGrace,
 		cursorPath: cursorPath,
 		groups:     newGroupGate(cfg, log),
 		workers:    make(map[string]chan workerJob),

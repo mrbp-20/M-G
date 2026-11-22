@@ -75,6 +75,17 @@ const (
 	// AccessGroup:<name> — checked by prefix match at runtime.
 )
 
+// ToolCardsMode says how much of a turn's tool calls a chat sees.
+type ToolCardsMode string
+
+const (
+	// ToolCardsShow posts a card per call: the command, and its output behind
+	// the details button.
+	ToolCardsShow ToolCardsMode = "show"
+	// ToolCardsHide posts no cards at all; the chat gets the closing answer.
+	ToolCardsHide ToolCardsMode = "hide"
+)
+
 // TelegramGatewayConfig configures the Telegram bot adapter.
 type TelegramGatewayConfig struct {
 	Enabled bool   `yaml:"enable"`
@@ -187,6 +198,14 @@ type GatewayChatConfig struct {
 	// The path is not created and not checked at load time: a missing directory
 	// is a runtime refusal, reported to the bot's admins.
 	Workspace string `yaml:"workspace"`
+
+	// ToolCards is what this chat sees of the tool calls a turn makes. Empty
+	// means the default: hidden in a group (a chat id below zero) and shown in
+	// a direct chat. A group holds people the operator did not hand the machine
+	// to, and a card carries the command, the paths in it and whatever the
+	// output holds. A chat that needs the detail for its own sake - debugging a
+	// tool in place - writes "show" and gets the cards back.
+	ToolCards ToolCardsMode `yaml:"tools"`
 }
 
 // TelegramUserGroup is a named set of Telegram user IDs.
@@ -595,4 +614,24 @@ func (m *MaxGatewayConfig) ChatOverride(chatID int64) *GatewayChatConfig {
 	}
 
 	return nil
+}
+
+// ToolCardsHidden reports whether the chat with chatID must go without the
+// cards of the tool calls its turns make: an explicit "hide" or "show" in the
+// chat entry wins, and without one a group hides them while a direct chat
+// shows them.
+func (m *MaxGatewayConfig) ToolCardsHidden(chatID int64) bool {
+	if m == nil {
+		return chatID < 0
+	}
+	if c := m.ChatOverride(chatID); c != nil {
+		switch c.ToolCards {
+		case ToolCardsHide:
+			return true
+		case ToolCardsShow:
+			return false
+		}
+	}
+
+	return chatID < 0
 }

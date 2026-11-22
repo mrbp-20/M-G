@@ -25,6 +25,17 @@ import (
 // jobHeaderRunes keeps the header one readable line above the report it marks.
 const jobHeaderRunes = 80
 
+// silentJobReport is the whole answer a scheduled job gives when it has nothing
+// to report: the run happened, its text stays in the job's own session, and the
+// conversation keeps quiet. Compared whole and never as a prefix - a report that
+// says "без изменений, но MOEX не ответил" carries news and must be shown.
+const silentJobReport = "без изменений"
+
+// isSilentJobReport tells a job's quiet answer from a report with content.
+func isSilentJobReport(text string) bool {
+	return text == silentJobReport
+}
+
 // jobHeader marks a message a scheduled job sends into the conversation: the
 // person must see at once that this is not a reply in the dialogue, but a task
 // that fired on its own, and which one it was.
@@ -74,6 +85,16 @@ func (b *Bot) SayJobReport(description string, at time.Time, text string) bool {
 	if text == "" {
 		return false
 	}
+	if isSilentJobReport(text) {
+		// A quiet answer is not a report: the run's own session keeps it, and the
+		// conversation stays free of routine "nothing happened" lines, so that a
+		// real failure is not read past among them (22.11.2026).
+		if b.log != nil {
+			b.log.Debug("max: job report kept quiet", "text", text)
+		}
+
+		return false
+	}
 	sessionID, ok := b.reportSession()
 	if !ok {
 		return false
@@ -105,6 +126,28 @@ func (b *Bot) MirrorTurn(sessionID string, primary acp.UpdateSender) (acp.Update
 	stopTyping := b.mirroredTyping(sessionID)
 	stop := func() {
 		stopTyping()
+		// A turn this bot wraps delivers its own answer (sender.go Flush), while the
+		// transcript keeps the same turn as its own messages - one, or several when
+		// the model wrote a line before the final answer. Byte comparison between
+		// what was delivered and what the transcript holds can never be trusted:
+		// on 22.11.2026 the mirror delivered one block of 1 329 units and the
+		// watcher (chatwatch.go) posted the same text as 35 + 1 292 under it, so the
+		// person read the answer twice. Telling the watcher to start after this
+		// block is the fact, not a guess: everything of this turn has been sent.
+		//
+		// The mark goes FIRST, before release() clears the running state. The
+		// watcher skips a conversation while its turn runs, so releasing first left
+		// a window in which the turn looked finished while its mark was not yet
+		// set - and a tick landing there posted the answer a second time on
+		// 22.11.2026 (Merlen's chat, 0.5 s apart). Marking first closes that window
+		// by construction; the grace in chatwatch.go covers the rest.
+		//
+		// A chat that moved away mid-turn delivered nothing - the answer stayed in
+		// its session (Flush, detached) - so it gets no such mark and the answer
+		// still reaches the chat that holds the conversation now.
+		if !chat.isDetached() {
+			b.markTurnEnd(sessionID)
+		}
 		release()
 	}
 	if primary == nil {
