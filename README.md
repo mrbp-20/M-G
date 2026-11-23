@@ -1,5 +1,7 @@
 # MAX gateway for Coddy — an overlay layer
 
+**Русская версия: [README.ru.md](README.ru.md)** — тот же документ по-русски.
+
 This is not a copy of Coddy: a layer of 197 files adds a gateway for the MAX messenger to Coddy. Coddy
 itself comes from its own repository —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,

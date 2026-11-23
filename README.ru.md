@@ -1,5 +1,7 @@
 # Шлюз MAX для Coddy — слой для наложения
 
+**English version: [README.md](README.md)** — the same document in English.
+
 Это не копия Coddy целиком: слой из 197 файлов добавляет в Coddy шлюз для мессенджера MAX.
 Сам Coddy берётся из своего репозитория —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent).
