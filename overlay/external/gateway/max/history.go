@@ -159,7 +159,7 @@ func historyLine(m llm.Message, limit int) string {
 	default:
 		return ""
 	}
-	text := strings.TrimSpace(oneLine(m.Content))
+	text := strings.TrimSpace(oneLine(plainText(m.Content)))
 	if text == "" {
 		return ""
 	}
@@ -174,6 +174,46 @@ func historyLine(m llm.Message, limit int) string {
 // asked for: DD.MM.YY-hh:mm:ss, in the machine's own zone so it matches the clock
 // on the wall rather than UTC. A message stored before the field existed has no
 // time, and its line simply starts with the speaker.
+//
+// plainText is a message as a messenger shows it. MAX renders neither headings
+// nor code spans, so their markers reached the reader as characters: a card
+// carried "## Объём" and `L_POOLS` verbatim (25.11.2026). The markers go, the
+// words stay; single underscores are left alone, because L_POOLS is a name and
+// not an italic phrase.
+func plainText(text string) string {
+	if text == "" || !strings.ContainsAny(text, "#`*_") {
+		return text
+	}
+	var sb strings.Builder
+	inFence := false
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			inFence = !inFence
+			continue
+		}
+		if !inFence {
+			trimmed := strings.TrimLeft(line, " \t")
+			if hashes := len(trimmed) - len(strings.TrimLeft(trimmed, "#")); hashes > 0 {
+				rest := trimmed[hashes:]
+				if rest == "" || strings.HasPrefix(rest, " ") || strings.HasPrefix(rest, "\t") {
+					line = strings.TrimLeft(rest, " \t")
+				}
+			}
+		}
+		if sb.Len() > 0 {
+			sb.WriteString("\n")
+		}
+		sb.WriteString(line)
+	}
+
+	out := sb.String()
+	out = strings.ReplaceAll(out, "`", "")
+	out = strings.ReplaceAll(out, "**", "")
+	out = strings.ReplaceAll(out, "__", "")
+
+	return out
+}
+
 func historyStamp(createdAt string) string {
 	at := strings.TrimSpace(createdAt)
 	if at == "" {
@@ -209,7 +249,7 @@ func historyTranscript(msgs []llm.Message) string {
 		default:
 			continue
 		}
-		text := strings.TrimSpace(m.Content)
+		text := strings.TrimSpace(plainText(m.Content))
 		if text == "" {
 			continue
 		}

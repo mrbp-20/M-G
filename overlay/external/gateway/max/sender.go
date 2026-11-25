@@ -818,12 +818,12 @@ func (b *Bot) handleModelAction(ctx context.Context, c *Client, u Update, cb Cal
 
 	isolation := access.EffectiveIsolation(chatID, b.cfg)
 	key := sessionstore.SessionKey(adapterName, chatID, from.UserID, isolation, isGroup)
-	dir, dirErr := b.turnDir(ctx, chatID, isGroup)
+	dir, promised, dirErr := b.turnDir(ctx, chatID, isGroup)
 	if dirErr != nil {
 		b.log.Warn("max: group directory", "err", dirErr, "chat", chatID)
 		return "", nil
 	}
-	st, err := b.ensureSession(ctx, key, dir)
+	st, err := b.ensureSession(ctx, key, dir, promised)
 	if err != nil {
 		b.log.Warn("max: callback session", "err", err, "user", from.UserID, "chat", chatID)
 		return "❌ Session error: " + err.Error(), nil

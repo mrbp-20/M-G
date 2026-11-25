@@ -10,7 +10,7 @@ Keep it current: a file added to the overlay, or a reason that changed, belongs 
 
 Two rules make updates cheap, and both are older than this document:
 
-1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 166 of our 224 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
+1. **MAX-specific code lives in new files.** A new file cannot conflict — nobody upstream changes a file that does not exist there. Today 168 of our 226 files are new, and they are the whole adapter: `external/gateway/max/*` (including `groups.go` and `groups_stub.go`, the two bodies of the optional group support), `external/gateway/serve_max.go`, `external/gateway/serve_max_stub.go`, `external/httpserver/chat_mirror.go`, `internal/session/session_origin.go` (which reads where a session started without loading it) and its test, `features/gateway_max.feature`, `scripts/maxgw-update.sh`, `scripts/maxgw-update-all.sh` with its Windows twins `scripts/maxgw-update-all.ps1` and `.cmd` (the whole cycle: look for a new Coddy and a new layer, download, build, restart), the two CI workflows (`.github/workflows/tests-max.yaml` and `security-max.yaml`), and the documentation set: `ARCHITECTURE.md`, `ARCHITECTURE.ru.md`, `README.ru.md`, `docs/surfaces/max.md` with its Russian twin, the two handover briefs, `docs/MAX-OVERLAY.md` and `docs/max-dossier/*`.
 2. **A change to somebody else's file is a hook, not a rewrite.** Two lines of registration beat a restructured function: upstream keeps moving those functions, and every line we add there is a line we pay for at the next rebase.
 
 When a change to a shared file turns out to be generic — useful to any gateway, not only to MAX — it belongs upstream as a pull request. A merged pull request removes the file from the overlay for good. That is also the road to Pavel taking the gateway itself.
@@ -94,6 +94,29 @@ and `scripts/build-desktop-packages.sh` in these five releases, and the layer do
 Gates after it: `gofmt` silent, `go vet` clean on three tag sets, three builds pass, the gateway 103.1 s
 under `-race`, `external/httpserver` 83.0 s, `internal/session` 67.9 s, `internal/config` 5.4 s,
 `internal/serve` 2.3 s.
+
+The rebase onto 1.4.45 (25.11.2026) was the fifth and the cheapest: six releases (1.4.40 ... 1.4.45), 103
+upstream files, +4 369/-494, and only **two** of them ours - `cmd/coddy/runtime_ipc_http.go` and
+`internal/agent/react.go`. Git replayed 248 commits without a single conflict; the two overlapping files
+needed no hand work either, because the hooks sit in places the six releases did not touch. What came in:
+JPEG screenshots with fewer futile retries, a reload and copy-link pair in the desktop menu, session
+management from the CLI, quieter metrics builds without PSI, Kimi tool-call recovery with fewer
+sign-outs, and a refreshed shell environment before commands. The last three matter to us in practice:
+we run on Kimi, we manage sessions through `/resume`, and we execute commands through that shell. Gates
+after it are the same set, plus the new tests below.
+
+### The directory rule: a promise, not a default
+
+Three fixes belong to the same round, all of them found live on 25.11.2026 in one conversation:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| every `/resume` into a conversation from another directory was undone in about twenty seconds | `turnDir` returned the gateway's own directory for a direct chat, and `ensureSession` enforced it like a promised workspace, replacing the conversation with an empty one | the directory is enforced only where somebody promised it (a group's `workspace`, or a chat entry that names one); a direct chat keeps whatever conversation `/resume` opened |
+| `/context` answered *Пока пусто: сначала пришлите сообщение* to a conversation holding seventy-four messages | the answer keyed on the missing context breakdown alone | with history but no measurement the answer names the message count and says when the measurement appears |
+| cards carried `## Объём`, `**все**` and `` `L_POOLS` `` as characters | the history card and transcript are plain text, while MAX renders neither headings nor code spans | `plainText` drops the markers and leaves single underscores alone, because `L_POOLS` is a name |
+
+Where a group **does** promise a directory, `/resume` into a conversation from elsewhere is now refused
+with both paths named, instead of replacing it behind the person's back.
 
 ### The document seam: two files
 

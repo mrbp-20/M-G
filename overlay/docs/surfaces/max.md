@@ -93,13 +93,13 @@ The banner names the bot (`gateway     max`), and the log says `max bot connecte
 | `/resume` | Lists the sessions of this server - eight per page, the one the chat is on marked ▶️ - and switches the conversation to the one a tap names; `/resume <id or part of a title>` finds it by id prefix or by a fragment of the title, and a single match switches at once. The origin is a pictogram: ✈️ Telegram, 🌐 web or console, 💬 another gateway, nothing for MAX itself, and `/help` carries the legend. The session is loaded before the chat is bound to it, so a bundle that cannot be read leaves the chat where it was. Admins only, as on the Telegram side. |
 | `/stop` | Ends the turn running in this conversation at once, through the same session cancel the web UI and the CLI use (`session/cancel`, so the session knows a person stopped it and the core ends the turn quietly instead of reporting an interrupted generation) - the model's work is cancelled, not merely hidden - and drops whatever waits behind it in the queue, since a waiting message would start a new turn the moment the stopped one returns. It is answered on intake, before the burst wait and before the queue, so it never waits for the answer it stops. In a group this is the admins'. |
 | `/model` | Opens an inline menu with one row per configured model; the current model is marked with ✓. A tap switches the model for the conversation and moves the checkmark to the new choice. `/model <id>` still sets the model directly by text. The menu is offered to admins in every chat, a personal one included; a non-admin tap is answered with *Менять настройки в этом чате могут только админы бота.* An admin's pick is also remembered as the bot's last model, so the next new conversation of the bot starts on it; anybody else's pick stays in their own session. |
-| `/context` | The context window usage of the conversation's session. |
+| `/context` | The context window usage of the conversation's session. A conversation that came back by `/resume` holds history but no measurement yet - the breakdown is taken at the end of a turn - so the answer names how many messages are in it instead of claiming it is empty. |
 | `/goal <objective>`, `/goal`, `/goal pause`, `/goal resume`, `/goal clear` | The session goal, handed to the session like on every surface ([Session goal and supervisor](../features/session-supervisor.md)). |
 | `/agent`, `/plan`, `/ask`, `/think`, `/nothink`, `/reasoning <level>` | Settings commands, handed to the session; `--once` and `--count=N` limit them to the next messages. |
 
 Every command is read in any case: `/stop`, `/STOP` and `/Stop` are one and the same, and so are the rest - the word is lowercased when the text is parsed.
 
-A switch of the conversation is invisible in a messenger: the messages stay where they are and the session behind them becomes another one. So `/resume` posts a **history card** right after the confirmation - a divider with the conversation's title and how many messages it holds, then up to thirty of its last messages, newest first, one per line: a `DD.MM.YY-hh:mm:ss` stamp in the machine's own zone, then `👤` for the person or `🤖` for the agent, then the text shortened to 120 characters - and a **📜 Развернуть** button that pages the whole transcript the way the details button pages a tool output. The transcript is read from the session, not from the chat: MAX stores what it rendered, without the markdown markers. A card has to fit one message, and its length is counted in the same units as the platform's limit - UTF-16 code units, where the `👤` and `🤖` markers cost two: counting
+A switch of the conversation is invisible in a messenger: the messages stay where they are and the session behind them becomes another one. So `/resume` posts a **history card** right after the confirmation - a divider with the conversation's title and how many messages it holds, then up to thirty of its last messages, newest first, one per line: a `DD.MM.YY-hh:mm:ss` stamp in the machine's own zone, then `👤` for the person or `🤖` for the agent, then the text shortened to 120 characters - and a **📜 Развернуть** button that pages the whole transcript the way the details button pages a tool output. The transcript is read from the session, not from the chat: MAX stores what it rendered, without the markdown markers. Markers a messenger does not render are dropped before posting as well: a heading `##` and a code span in backticks reached the reader as characters (25.11.2026), so the card and the transcript carry the words without them, while single underscores are left alone - `L_POOLS` is a name, not an italic phrase. A card has to fit one message, and its length is counted in the same units as the platform's limit - UTF-16 code units, where the `👤` and `🤖` markers cost two: counting
 characters produced a card that passed our own check and hit the platform's
 (`Field 'text' size (4014) must be at most 4000`), and the person saw the confirmation with no history under it.
 A long conversation therefore loses its oldest lines and gets the "…и ещё N строк" note, and if the platform
@@ -221,6 +221,16 @@ itself, with no restart.
 
 A group's session is created in that directory. If a group's directory changes, a new session begins and
 the previous conversation stays in the web interface, unbroken.
+
+The directory is a promise only where somebody made it: a group whose workspace is set, or a chat entry
+of the config that names one. Everywhere else the gateway's own directory is only where a new
+conversation starts, and a conversation keeps the directory it was created in - so a chat whose
+directory is merely a default keeps whatever `/resume` opened, even when that conversation lives
+somewhere else. Where the directory **is** promised, `/resume` to a conversation from another directory
+does not replace it behind the person's back: the answer names both paths and leaves the choice - fix
+the group's path, or open that conversation in a direct chat. Until 25.11.2026 the default was enforced
+like a promise, and every switch to a conversation in another directory was quietly replaced by an
+empty one about twenty seconds later; `/context` then truthfully reported nothing to show.
 
 ## Permissions
 

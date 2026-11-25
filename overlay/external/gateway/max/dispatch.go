@@ -465,12 +465,12 @@ func (b *Bot) processMessage(ctx context.Context, in inbound, key string) {
 	// group's configured one in a group. A group whose directory is gone does
 	// not work at all, and the chat itself is told nothing - the admins are, at
 	// most once an hour, because a broken path is their file to fix.
-	dir, dirErr := b.turnDir(tctx, in.chatID, in.isGroup)
+	dir, promised, dirErr := b.turnDir(tctx, in.chatID, in.isGroup)
 	if dirErr != nil {
 		b.log.Warn("max: group directory", "err", dirErr, "chat", in.chatID, "user", in.userID)
 		return
 	}
-	st, err := b.ensureSession(tctx, key, dir)
+	st, err := b.ensureSession(tctx, key, dir, promised)
 	if err != nil {
 		b.log.Warn("max: ensure session", "err", err)
 		b.reply(ctx, in, "Не удалось начать беседу: "+err.Error())
@@ -709,21 +709,28 @@ func (b *Bot) reply(ctx context.Context, in inbound, text string) {
 	}
 }
 
-// turnDir is the directory a turn works in: the gateway's own for a direct
-// chat, the group's configured workspace for a group.
-func (b *Bot) turnDir(ctx context.Context, chatID int64, isGroup bool) (string, error) {
+// turnDir is the directory a turn works in, and whether the chat actually
+// promises it. A group's workspace is promised by the admin who set it, so a
+// conversation living elsewhere has to give way to it. The gateway's own
+// directory is promised by nobody: it is only where a new conversation starts,
+// while a conversation that already exists keeps the directory it was created
+// in - which is exactly what /resume relies on. On 25.11.2026 the default was
+// enforced like a promise, so every switch to a conversation in another
+// directory was replaced by an empty one about twenty seconds later, and
+// /context then truthfully reported nothing to show.
+func (b *Bot) turnDir(ctx context.Context, chatID int64, isGroup bool) (dir string, promised bool, err error) {
 	if !isGroup || b.groups == nil {
-		return b.cwd, nil
+		return b.cwd, false, nil
 	}
 	dir, notice, err := b.groups.Workspace(chatID)
 	if notice != "" {
 		b.notifyAdmins(ctx, notice)
 	}
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 
-	return dir, nil
+	return dir, true, nil
 }
 
 // ensureSession gets or creates the session for key in dir. A conversation this
@@ -732,14 +739,16 @@ func (b *Bot) turnDir(ctx context.Context, chatID int64, isGroup bool) (string, 
 // A session keeps the directory it was created in, so a chat that ends up in
 // another directory gets a session of its own: the old one stays on disk and
 // stays readable in the web interface, and nothing is thrown away to change a
-// path.
-func (b *Bot) ensureSession(ctx context.Context, key, dir string) (*session.State, error) {
+// path. That replacement happens only when the chat promises the directory
+// (promised): a chat that merely has a default one keeps whatever conversation
+// it was given, so /resume is never undone by our own bookkeeping.
+func (b *Bot) ensureSession(ctx context.Context, key, dir string, promised bool) (*session.State, error) {
 	fresh := b.store.Peek(key) == ""
 	st, err := b.runner.EnsureHTTPSession(ctx, b.store.Get(key), dir)
 	if err != nil {
 		return nil, err
 	}
-	if dir != "" && st.GetCWD() != dir {
+	if promised && dir != "" && st.GetCWD() != dir {
 		old := b.store.Get(key)
 		b.store.Reset(key)
 		b.runner.ForgetLiveSession(old)

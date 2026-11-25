@@ -143,12 +143,12 @@ func (b *Bot) handleModelCommand(ctx context.Context, in inbound, key string) {
 		b.reply(ctx, in, "⚠️ Модели не настроены.")
 		return
 	}
-	dir, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
+	dir, promised, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
 	if dirErr != nil {
 		b.log.Warn("max: group directory", "err", dirErr, "chat", in.chatID)
 		return
 	}
-	st, err := b.ensureSession(ctx, key, dir)
+	st, err := b.ensureSession(ctx, key, dir, promised)
 	if err != nil {
 		b.reply(ctx, in, "Ошибка сессии: "+err.Error())
 		return
@@ -255,18 +255,27 @@ func resolveModelCallback(models []config.ModelEntry, payload string) (string, b
 
 // handleContextCommand reports the session's context breakdown.
 func (b *Bot) handleContextCommand(ctx context.Context, in inbound, key string) {
-	dir, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
+	dir, promised, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
 	if dirErr != nil {
 		b.log.Warn("max: group directory", "err", dirErr, "chat", in.chatID)
 		return
 	}
-	st, err := b.ensureSession(ctx, key, dir)
+	st, err := b.ensureSession(ctx, key, dir, promised)
 	if err != nil {
 		b.reply(ctx, in, "Ошибка сессии: "+err.Error())
 		return
 	}
 	bd := st.GetLastContextBreakdown()
 	if bd == nil {
+		// A conversation that came back by /resume has history but no
+		// measurement yet: the breakdown is taken at the end of a turn. Saying
+		// "send a message first" to a conversation holding seventy-four of them
+		// was simply wrong (25.11.2026).
+		if n := len(st.GetMessages()); n > 0 {
+			b.reply(ctx, in, fmt.Sprintf(
+				"Контекст\n\nВ беседе сообщений: %d. Замер контекста ещё не снят: он появляется после следующего хода.", n))
+			return
+		}
 		b.reply(ctx, in, "Контекст\n\nПока пусто: сначала пришлите сообщение.")
 		return
 	}

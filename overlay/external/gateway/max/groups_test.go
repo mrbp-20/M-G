@@ -512,12 +512,12 @@ func TestEnsureSession_MovesToTheNewDirectory(t *testing.T) {
 	ctx := context.Background()
 	key := "max:chat:-7"
 
-	st, err := b.ensureSession(ctx, key, first)
+	st, err := b.ensureSession(ctx, key, first, true)
 	if err != nil {
 		t.Fatalf("ensureSession: %v", err)
 	}
 	oldID := st.ID
-	st, err = b.ensureSession(ctx, key, second)
+	st, err = b.ensureSession(ctx, key, second, true)
 	if err != nil {
 		t.Fatalf("ensureSession: %v", err)
 	}

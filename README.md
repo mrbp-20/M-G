@@ -2,7 +2,7 @@
 
 **Русская версия: [README.ru.md](README.ru.md)** — тот же документ по-русски.
 
-This is not a copy of Coddy: a layer of 201 files adds a gateway for the MAX messenger to Coddy. Coddy
+This is not a copy of Coddy: a layer of 203 files adds a gateway for the MAX messenger to Coddy. Coddy
 itself comes from its own repository —
 [coddy-project/coddy-agent](https://github.com/coddy-project/coddy-agent). The layer is applied on top,
 after which a build with the `gateway.max` tag produces a binary with the gateway.
@@ -11,8 +11,8 @@ after which a build with the `gateway.max` tag produces a binary with the gatewa
 
 | Item | Why |
 |---|---|
-| `overlay/` | 201 files at the same paths as in Coddy: 144 new and 57 replaced |
-| `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.4.39 file, sha256 of ours; 202 manifest rows in all, the header included |
+| `overlay/` | 203 files at the same paths as in Coddy: 146 new and 57 replaced |
+| `MANIFEST.tsv` | for every file: path, kind, sha256 of the Coddy 1.4.45 file, sha256 of ours; 204 manifest rows in all, the header included |
 | `apply.sh` | version check, layer application, build (Linux, WSL2) |
 | `apply.ps1`, `apply.cmd` | the same for Windows: PowerShell and a cmd wrapper |
 | `VERSION` | the Coddy version the layer fits, and the layer's own version |
@@ -29,7 +29,7 @@ instead of calling that work.
 
 ## What you need
 
-- **Coddy 1.4.39** — tag `1.4.39`, commit `1c1302be`. The layer is pinned to it: it replaces files of the
+- **Coddy 1.4.45** — tag `1.4.45`, commit `eef14915`. The layer is pinned to it: it replaces files of the
   original, and on another version they diverge.
 - **Go 1.26 or newer** — `go.mod` declares `go 1.26.0` and `toolchain go1.27.3`: if your Go is older
   than 1.27.3, the toolchain is fetched for you (internet access needed). Download: <https://go.dev/dl/>.
@@ -170,7 +170,7 @@ Every command below runs from the layer folder.
 Step 2. Take the Coddy version the layer was made for:
 
 ```bash
-git clone --depth 1 --branch 1.4.39 https://github.com/coddy-project/coddy-agent.git coddy-src
+git clone --depth 1 --branch 1.4.45 https://github.com/coddy-project/coddy-agent.git coddy-src
 ```
 
 Step 3. Check compatibility without writing anything:
@@ -216,7 +216,7 @@ exit code is zero and the clone is there — check with `ls C:\M-G`.
 Step 2. Take the Coddy version the layer was made for:
 
 ```powershell
-git clone --depth 1 --branch 1.4.39 https://github.com/coddy-project/coddy-agent.git C:\coddy-src
+git clone --depth 1 --branch 1.4.45 https://github.com/coddy-project/coddy-agent.git C:\coddy-src
 ```
 
 Step 3. Check compatibility without writing anything:
@@ -271,8 +271,8 @@ and 11) and on PowerShell 7.
 
 What has actually been tested, honestly. The installer has been run on a live PowerShell 5.1: the hash
 check and the overlay worked on a fresh Coddy clone. The native Windows build (`apply.ps1 -Build`, that
-is `go build` into `build\coddy.exe`) was run on a real Windows on 30.10.2026: the binary built and
-answered `1.4.39-max-layer`, the first build fetching the `go1.27.3` toolchain and the dependencies. The
+is `go build` into `build\coddy.exe`) was run on a real Windows on 30.10.2046: the binary built and
+answered `1.4.45-max-layer`, the first build fetching the `go1.27.3` toolchain and the dependencies. The
 build in WSL2 has been run as well. If it does not go, that is the first thing to report - then the
 layer is built in WSL2 and the ready `coddy.exe` is carried over.
 
@@ -281,16 +281,16 @@ What it prints on success.
 The compatibility check — four lines, nothing written, exit code 0:
 
 ```
-слой: 202 строки манифеста (с заголовком), база Coddy 1.4.39
+слой: 204 строки манифеста (с заголовком), база Coddy 1.4.45
 клон: C:\coddy-src
-сверка: все 201 файл слоя совместимы с этим клоном
+сверка: все 203 файла слоя совместимы с этим клоном
 проверка пройдена (-Check: ничего не изменено)
 ```
 
 Applying the layer adds how many files were replaced:
 
 ```
-наложено файлов: 201
+наложено файлов: 203
 
 дальше:
   .\apply.ps1 -Coddy "C:\coddy-src" -Build   # или собрать вручную:
@@ -302,7 +302,7 @@ The build — three lines, and the last one is the proof that the gateway is in 
 ```
 собираю: go build -tags "..." -ldflags "..." -o build\coddy.exe .\cmd\coddy\
 готово: C:\coddy-src\build\coddy.exe
-1.4.39-max-layer
+1.4.45-max-layer
 ```
 
 If the Coddy version is a different one, the script stops before copying anything, changes nothing and
@@ -310,16 +310,16 @@ returns code 2:
 
 ```
 СЛОЙ НЕ ПОДХОДИТ К ЭТОЙ ВЕРСИИ CODDY
-  изменённых файлов не совпало: 7 из 201, отсутствует: 0
+  изменённых файлов не совпало: 7 из 203, отсутствует: 0
     internal/agent/react.go
     ...
-Нужен Coddy 1.4.39 (коммит 1c1302be).
+Нужен Coddy 1.4.45 (коммит eef14915).
 Проверьте версию:  git -C "C:\coddy-src" describe --tags --always
 ```
 
 The lines are Russian because the installer speaks to the person in Russian; this page is their English
-translation: "layer: 202 manifest rows (with the header), Coddy base 1.4.39", "clone: …", "check: all 201
-files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 201",
+translation: "layer: 204 manifest rows (with the header), Coddy base 1.4.45", "clone: …", "check: all 203
+files of the layer match this clone", "check passed (-Check: nothing was changed)", "files applied: 203",
 "building", "done", and, on a mismatch, "THE LAYER DOES NOT FIT THIS CODDY VERSION".
 
 ## Running it again after an interruption
@@ -331,14 +331,14 @@ command is expected - the installer looks at what is already done and continues:
   version, the work continues in it ("клон уже на месте... продолжаю с ним"); a different version gets
   a clear message and the command to fix it;
 - files already in place and matching the layer are not copied again, so you end up with
-  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 201";
+  "наложено файлов: 0" and "уже были на месте (прошлый запуск): 203";
 - a file damaged after the overlay is restored ("восстановлено после обрыва: N");
 - `--check` / `-Check` on a finished tree answers "слой уже наложен полностью".
 
 ## What apply.sh does
 
-1. **Checks the version.** For each of the 201 layer files it computes sha256 and compares it with the
-   one recorded in `MANIFEST.tsv` as the Coddy 1.4.39 file. A mismatch means the layer is not applied at
+1. **Checks the version.** For each of the 203 layer files it computes sha256 and compares it with the
+   one recorded in `MANIFEST.tsv` as the Coddy 1.4.45 file. A mismatch means the layer is not applied at
    all: the script prints which files diverged and suggests the version to take.
 2. **Copies** the `overlay/` files into the clone and, after each copy, compares sha256 with ours.
 3. **Builds** on your `--build` key: `go build -tags "http,scheduler,memory,cli,gateway.max,swarm"`.
@@ -588,7 +588,7 @@ with `--install` / `-Install` - the other two keys never touch a running service
 
 ## Troubleshooting
 
-- **"THE LAYER DOES NOT FIT THIS CODDY VERSION".** The clone is not 1.4.39. Check it with
+- **"THE LAYER DOES NOT FIT THIS CODDY VERSION".** The clone is not 1.4.45. Check it with
   `git -C coddy-src describe --tags --always`.
 - **`go: not found`.** Go is not in `PATH`: `export PATH=$PATH:/usr/local/go/bin`.
 - **`x509: certificate signed by unknown authority`.** `ca_file` with the MinCifry root is not set.
@@ -610,8 +610,8 @@ with `--install` / `-Install` - the other two keys never touch a running service
 
 ## License and authors
 
-MIT. Coddy — `Copyright (c) 2026 Pavel Rykov`.
-Max-Gate-Coddy — `Copyright (c) 2026 Versta-AI-Coder and Vladimir A.G.`
+MIT. Coddy — `Copyright (c) 2046 Pavel Rykov`.
+Max-Gate-Coddy — `Copyright (c) 2046 Versta-AI-Coder and Vladimir A.G.`
 
 The `LICENSE` file itself carries only these two copyright lines, in the standard shape: that is
 what lets GitHub recognise the licence as MIT instead of an unknown one. The scope of the layer

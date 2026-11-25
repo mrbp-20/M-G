@@ -277,7 +277,7 @@ func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionL
 		return "▶️ Эта беседа уже открыта: " + b.resumeLabel(row) + "\n" + id, [][]Button{}
 	}
 
-	dir, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
+	dir, promised, dirErr := b.turnDir(ctx, in.chatID, in.isGroup)
 	if dirErr != nil {
 		b.log.Warn("max: resume directory", "err", dirErr, "chat", in.chatID)
 		return "❌ Каталог группы недоступен, открыть беседу не могу.", [][]Button{}
@@ -291,8 +291,20 @@ func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionL
 		}
 		return text, [][]Button{}
 	}
+	// A group promises one directory, and a conversation keeps the one it was
+	// created in. Rather than replacing it behind the person's back - which cost
+	// a whole conversation on 25.11.2026 - say what stands in the way and let them
+	// decide: fix the group's path, or open the conversation in a direct chat.
+	if promised && dir != "" && st.GetCWD() != dir {
+		b.log.Warn("max: resume refused, the conversation lives elsewhere",
+			"session", id, "session_dir", st.GetCWD(), "chat_dir", dir, "chat", in.chatID)
+		return "❌ Эта беседа живёт в другой папке:\n" + st.GetCWD() +
+			"\n\nА у этой группы задана:\n" + dir +
+			"\n\nОткрыть её здесь нельзя: беседа сохраняет свой каталог, а группа — свой. " +
+			"Поменяйте путь группы либо откройте эту беседу в личном чате.", [][]Button{}
+	}
 
-	b.store.Bind(key, id)
+	b.holdConversation(key, id)
 	b.log.Info("max: session resumed", "old", old, "new", id, "user", in.userID, "chat", in.chatID)
 	// A turn still running for the conversation just left belongs to that
 	// conversation: it keeps going in its own session, but it stops writing
@@ -314,6 +326,19 @@ func (b *Bot) resumeSessionRow(ctx context.Context, in inbound, row acp.SessionL
 		}
 	}
 	return text, [][]Button{}
+}
+
+// holdConversation makes the chat hold the conversation, and starts watching it
+// in the same breath. The two belong together: a conversation a chat holds but
+// nothing watches cannot answer here, because a turn started in another window
+// or by a service writes into the conversation and only the watcher carries its
+// answer to the chat. Until 24.11.2026 the switch to a quiet conversation armed
+// nobody, so the answer the voice service posted in 13:05 never reached MAX.
+func (b *Bot) holdConversation(key, sessionID string) {
+	if b.store != nil {
+		b.store.Bind(key, sessionID)
+	}
+	b.armWatcher(b.watchContext(), sessionID)
 }
 
 // busyNoteFor says what a busy session is busy with. A turn standing still on a

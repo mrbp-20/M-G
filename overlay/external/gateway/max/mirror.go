@@ -237,7 +237,7 @@ func (b *Bot) chatSender(sessionID string) (*Sender, func()) {
 	chat := b.newSender(ctx, c, target)
 	// The chat's own session, so the pictures its agent reads are shown there
 	// (pictures.go) - the same as the turn of a message typed in MAX.
-	dir, dirErr := b.turnDir(ctx, target.ChatID, target.ChatID < 0)
+	dir, _, dirErr := b.turnDir(ctx, target.ChatID, target.ChatID < 0)
 	if dirErr != nil {
 		b.log.Warn("max: mirror directory", "err", dirErr, "chat", target.ChatID)
 		return chat, chat.Flush
