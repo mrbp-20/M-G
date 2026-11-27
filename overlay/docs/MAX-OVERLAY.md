@@ -105,6 +105,20 @@ sign-outs, and a refreshed shell environment before commands. The last three mat
 we run on Kimi, we manage sessions through `/resume`, and we execute commands through that shell. Gates
 after it are the same set, plus the new tests below.
 
+The rebase onto 1.4.51 (27.11.2026) brought one large feature and five fixes. Six releases (1.4.46 ... 1.4.51), 255 upstream files, +26 278/-1 636, and 131 new files of which 98 are the
+interface: JavaScript extensions with streams, MCP cards and settings - a store under
+`$CODDY_HOME/extensions`, a `--extension` flag, eleven `/coddy/extensions...` routes and a new
+`extension_values` configuration key. Fifteen files overlapped with ours and exactly one conflicted -
+the project `README.md`, where our side stayed. The new key is carried by our JSON converters and by
+the schema, so saving settings from the web does not wipe it; that parity is the same lesson the
+`tools` field taught in November. Of the fixes, two matter to us in practice: a remote token is now
+refreshed after a 401 (we drive `--remote` and the swarm), and the ACP connect no longer rewrites saved
+model parameters. The rest are interface comfort - a large browser screenshot no longer drops the
+extension socket, the phone composer stays steady while a reply streams, inline code reads as a
+command to a screen reader. One caution belongs here because it is about rights, not looks: an
+extension can rewrite configuration and upsert providers through the config API, so installing one is
+installing code with rights.
+
 ### The directory rule: a promise, not a default
 
 Three fixes belong to the same round, all of them found live on 25.11.2026 in one conversation:
