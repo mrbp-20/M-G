@@ -44,6 +44,13 @@ type uploadServer struct {
 	// uploadsAnswer, when set, is what the address call answers instead of a
 	// usable address.
 	uploadsAnswer string
+	// brokenBody says the request under test carries fewer bytes than its
+	// declared length on purpose. The store side then has to hit a read
+	// failure, and how that failure is worded depends on timing - a short read
+	// in one run, a connection closed under the reader in another (which is how
+	// CI caught it on 27.11.2026). The failure itself is what the test wants,
+	// so the handler must not report it as a test error.
+	brokenBody bool
 }
 
 func newUploadServer(t *testing.T, answer string) *uploadServer {
@@ -80,11 +87,17 @@ func newUploadServer(t *testing.T, answer string) *uploadServer {
 		u.length = r.ContentLength
 		mediaType, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
 		if err != nil || mediaType != "multipart/form-data" {
+			if u.brokenBody {
+				return
+			}
 			t.Errorf("the upload must be multipart, got %q", r.Header.Get("Content-Type"))
 			return
 		}
 		part, err := multipart.NewReader(r.Body, params["boundary"]).NextPart()
 		if err != nil {
+			if u.brokenBody {
+				return
+			}
 			t.Errorf("read the part: %v", err)
 			return
 		}
@@ -198,6 +211,7 @@ func TestUploadFile_StreamsTheBody(t *testing.T) {
 // that shrank between its size being taken and the upload must fail loudly.
 func TestUploadFile_ShortReaderIsAnError(t *testing.T) {
 	u := newUploadServer(t, `{"token":"never"}`)
+	u.brokenBody = true
 	_, err := clientOf(u).UploadFile(context.Background(), "short.pdf", "application/pdf", 1024, bytes.NewReader([]byte("only a few")))
 	if err == nil {
 		t.Fatal("a body shorter than its declared length must fail")
